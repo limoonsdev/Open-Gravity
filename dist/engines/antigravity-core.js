@@ -92,31 +92,87 @@ class AntigravityCore {
             req.end();
         });
     }
-    async getAvailableModels() {
+    async getCleanModels() {
         try {
-            const resp = await this.rpcCall('GetAvailableModels', {});
-            const rawModels = resp?.response?.models || {};
-            const result = {};
-            for (const [key, val] of Object.entries(rawModels)) {
-                result[key] = {
-                    id: key,
-                    displayName: val.displayName || key,
-                    model: val.model || key,
-                    maxTokens: val.maxTokens || 131072,
-                    maxOutputTokens: val.maxOutputTokens || 32768,
-                    supportsThinking: !!val.supportsThinking,
-                    thinkingBudget: val.thinkingBudget,
-                    apiProvider: val.apiProvider,
-                    modelProvider: val.modelProvider,
-                    quotaRemainingFraction: val.quotaInfo?.remainingFraction,
-                    quotaResetTime: val.quotaInfo?.resetTime,
-                };
+            const status = await this.getUserStatus();
+            const rawConfigs = status?.cascadeModelConfigData?.clientModelConfigs || [];
+            const cleanList = [];
+            for (const mc of rawConfigs) {
+                const id = mc.modelId;
+                if (!id || id.startsWith('chat_') || id.startsWith('embedding_') || id.startsWith('code_')) {
+                    continue;
+                }
+                let provider = 'Google';
+                if (id.includes('claude'))
+                    provider = 'Anthropic';
+                else if (id.includes('gpt'))
+                    provider = 'OpenAI/OSS';
+                const quotaPct = mc.quotaInfo?.remainingFraction !== undefined
+                    ? Math.round(mc.quotaInfo.remainingFraction * 100)
+                    : undefined;
+                cleanList.push({
+                    id,
+                    displayName: mc.label || id,
+                    model: mc.modelOrAlias?.model || id,
+                    maxTokens: id.includes('gemini') ? 1048576 : (id.includes('claude') ? 250000 : 131072),
+                    supportsThinking: id.includes('thinking') || id.includes('high'),
+                    apiProvider: provider,
+                    modelProvider: provider,
+                    quotaRemainingPercent: quotaPct,
+                    quotaResetTime: mc.quotaInfo?.resetTime,
+                    isRecommended: !!mc.isRecommended,
+                    status: 'untested',
+                });
             }
-            return result;
+            if (cleanList.length > 0) {
+                // Sort with recommended models on top
+                return cleanList.sort((a, b) => {
+                    if (a.id === 'gemini-3.7-flash-high')
+                        return -1;
+                    if (b.id === 'gemini-3.7-flash-high')
+                        return 1;
+                    return (b.quotaRemainingPercent || 0) - (a.quotaRemainingPercent || 0);
+                });
+            }
         }
         catch (e) {
-            logger_1.logger.debug(`Failed to fetch models from RPC: ${e.message}`);
-            return {};
+            logger_1.logger.debug(`Failed to fetch clean models: ${e.message}`);
+        }
+        // Fallback list of genuine models
+        return [
+            { id: 'gemini-3.7-flash-high', displayName: 'Gemini 3.7 Flash (High)', model: 'gemini-3.7-flash-high', maxTokens: 1048576, modelProvider: 'Google', supportsThinking: true, isRecommended: true, quotaRemainingPercent: 100 },
+            { id: 'gemini-3.7-flash-medium', displayName: 'Gemini 3.7 Flash (Medium)', model: 'gemini-3.7-flash-medium', maxTokens: 1048576, modelProvider: 'Google', quotaRemainingPercent: 100 },
+            { id: 'gemini-3.7-flash-low', displayName: 'Gemini 3.7 Flash (Low)', model: 'gemini-3.7-flash-low', maxTokens: 1048576, modelProvider: 'Google', quotaRemainingPercent: 100 },
+            { id: 'gemini-pro-agent', displayName: 'Gemini 3.1 Pro (High)', model: 'gemini-pro-agent', maxTokens: 1048576, modelProvider: 'Google', supportsThinking: true, quotaRemainingPercent: 100 },
+            { id: 'claude-sonnet-4-6', displayName: 'Claude Sonnet 4.6 (Thinking)', model: 'claude-sonnet-4-6', maxTokens: 250000, modelProvider: 'Anthropic', supportsThinking: true, quotaRemainingPercent: 100 },
+            { id: 'claude-opus-4-6-thinking', displayName: 'Claude Opus 4.6 (Thinking)', model: 'claude-opus-4-6-thinking', maxTokens: 250000, modelProvider: 'Anthropic', supportsThinking: true, quotaRemainingPercent: 100 },
+            { id: 'gpt-oss-120b-medium', displayName: 'GPT-OSS 120B (Medium)', model: 'gpt-oss-120b-medium', maxTokens: 131072, modelProvider: 'OpenAI/OSS', quotaRemainingPercent: 100 },
+        ];
+    }
+    async getAvailableModels() {
+        const clean = await this.getCleanModels();
+        const map = {};
+        for (const m of clean) {
+            map[m.id] = m;
+        }
+        return map;
+    }
+    async pingModel(modelId) {
+        const start = Date.now();
+        try {
+            // Fast 1-token probe
+            const tier = modelId.includes('pro') ? 'pro' : (modelId.includes('low') ? 'flash_lite' : 'flash');
+            // Quick test via agentapi with 1 token prompt
+            const result = await Promise.race([
+                this.generateViaAgentApi({ prompt: '1', modelTier: tier }),
+                new Promise((_, reject) => setTimeout(() => reject(new Error('Probe timeout (4s)')), 4000))
+            ]);
+            const latencyMs = Date.now() - start;
+            return { success: true, latencyMs };
+        }
+        catch (e) {
+            const latencyMs = Date.now() - start;
+            return { success: false, latencyMs, error: e.message };
         }
     }
     async getUserStatus() {
@@ -133,11 +189,10 @@ class AntigravityCore {
             const status = await this.getUserStatus();
             if (!status)
                 return null;
-            const name = status.name || 'Utilisateur Google';
-            const email = status.email || 'Non renseigné';
+            const name = status.name || 'Google User';
+            const email = status.email || 'Active session';
             const planName = status.userTier?.name || status.planStatus?.planInfo?.planName || 'Google AI Pro';
-            const tierDescription = status.userTier?.description || 'Abonnement actif';
-            // Find lowest/representative remaining quota fraction from models
+            const tierDescription = status.userTier?.description || 'Active subscription';
             let remainingPercent = 100;
             let resetTime;
             const modelConfigs = status.cascadeModelConfigData?.clientModelConfigs || [];
@@ -191,7 +246,6 @@ class AntigravityCore {
         if (!conversationId) {
             throw new Error(`Failed to create conversation with Antigravity: ${stdout || stderr}`);
         }
-        // Wait for transcript completion
         const home = os_1.default.homedir();
         const transcriptPath = path_1.default.join(home, '.gemini', 'antigravity', 'brain', conversationId, '.system_generated', 'logs', 'transcript.jsonl');
         return await this.pollTranscript(transcriptPath, params.onDelta);

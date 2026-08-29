@@ -4,7 +4,9 @@ import { AntigravityDiscovery } from '../engines/discovery';
 import { antigravityCore, UserAccountDetails } from '../engines/antigravity-core';
 import { requestRouter } from '../engines/router';
 import { IdeConfigurator } from '../engines/ide-config';
+import { ModelSelector } from './model-selector';
 import { logger, LogEntry } from '../utils/logger';
+import { configManager } from '../utils/config';
 
 export class InteractiveTui {
   private rl: readline.Interface | null = null;
@@ -12,6 +14,7 @@ export class InteractiveTui {
   private host: string;
   private defaultModel: string;
   private isRunning: boolean = false;
+  private isSelectingModel: boolean = false;
 
   constructor(options: { port: number; host: string; defaultModel: string }) {
     this.port = options.port;
@@ -23,15 +26,11 @@ export class InteractiveTui {
     this.isRunning = true;
     this.drawHeader(account, pid, activePort);
 
-    this.rl = readline.createInterface({
-      input: process.stdin,
-      output: process.stdout,
-      prompt: chalk.cyan('og > '),
-    });
+    this.createReadline();
 
     // Intercept logs so they don't break current user input line
     logger.on('log', (entry: LogEntry) => {
-      if (!this.isRunning || !this.rl) return;
+      if (!this.isRunning || !this.rl || this.isSelectingModel) return;
 
       const isPolling = entry.message.includes('/status') || entry.message.includes('/health');
       if (isPolling) return;
@@ -49,10 +48,20 @@ export class InteractiveTui {
       console.log(`${chalk.gray(`[${entry.timestamp}]`)} ${tag} ${entry.message}`);
       this.rl.prompt(true);
     });
+  }
+
+  private createReadline() {
+    this.rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout,
+      prompt: chalk.cyan('og > '),
+    });
 
     this.rl.prompt();
 
     this.rl.on('line', async (line) => {
+      if (this.isSelectingModel) return;
+
       const input = line.trim();
       if (!input) {
         this.rl?.prompt();
@@ -60,17 +69,20 @@ export class InteractiveTui {
       }
 
       await this.handleCommand(input);
-      if (this.isRunning) {
+      if (this.isRunning && !this.isSelectingModel) {
         this.rl?.prompt();
       }
     });
 
     this.rl.on('close', () => {
-      this.shutdown();
+      if (!this.isSelectingModel) {
+        this.shutdown();
+      }
     });
   }
 
   public drawHeader(account: UserAccountDetails | null, pid?: number, activePort?: number) {
+    const currentDef = configManager.get().defaultModel;
     console.log('');
     console.log(`  ${chalk.bold.cyan('Open Gravity')} ${chalk.gray('v1.0.0')} — ${chalk.white('Universal Antigravity AI Bridge')}`);
     console.log('');
@@ -89,7 +101,7 @@ export class InteractiveTui {
           resetStr = ` (Resets at ${d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })})`;
         } catch {}
       }
-      const quotaColor = quotaPct > 50 ? chalk.green : (quotaPct > 20 ? chalk.yellow : chalk.red);
+      const quotaColor = quotaPct > 50 ? chalk.green : (quotaPct > 10 ? chalk.yellow : chalk.red);
 
       console.log(`    • Account:      ${chalk.white.bold(account.name)} ${chalk.gray(`(${account.email})`)}`);
       console.log(`    • Plan:         ${chalk.hex('#a855f7')(account.planName)} ${chalk.green('✔')}`);
@@ -100,9 +112,9 @@ export class InteractiveTui {
 
     const conn = pid ? chalk.green(`Connected (PID ${pid}, Port ${activePort})`) : chalk.yellow('Offline');
     console.log(`    • Antigravity:  ${conn}`);
-    console.log(`    • Default:      ${chalk.cyan(this.defaultModel)}`);
+    console.log(`    • Default:      ${chalk.cyan(currentDef)}`);
     console.log('');
-    console.log(`  ${chalk.gray('Hotkeys/Commands:')} ${chalk.cyan('configure')} (${chalk.bold('c')})  ${chalk.cyan('status')} (${chalk.bold('s')})  ${chalk.cyan('models')} (${chalk.bold('m')})  ${chalk.cyan('doctor')} (${chalk.bold('d')})  ${chalk.cyan('clear')} (${chalk.bold('cls')})  ${chalk.cyan('quit')} (${chalk.bold('q')})`);
+    console.log(`  ${chalk.gray('Hotkeys/Commands:')} ${chalk.cyan('models')} (${chalk.bold('m')})  ${chalk.cyan('configure')} (${chalk.bold('c')})  ${chalk.cyan('status')} (${chalk.bold('s')})  ${chalk.cyan('doctor')} (${chalk.bold('d')})  ${chalk.cyan('clear')} (${chalk.bold('cls')})  ${chalk.cyan('quit')} (${chalk.bold('q')})`);
     console.log(chalk.gray('  --------------------------------------------------------------------------------'));
     console.log('');
   }
@@ -110,9 +122,25 @@ export class InteractiveTui {
   private async handleCommand(cmd: string) {
     const parts = cmd.split(' ');
     const main = parts[0].toLowerCase();
-    const arg = parts[1]?.toLowerCase();
 
     switch (main) {
+      case 'm':
+      case 'model':
+      case 'models':
+      case 'use':
+        this.isSelectingModel = true;
+        if (this.rl) {
+          this.rl.close();
+          this.rl = null;
+        }
+
+        const selector = new ModelSelector(() => {
+          this.isSelectingModel = false;
+          this.createReadline();
+        });
+        await selector.start();
+        break;
+
       case 'c':
       case 'config':
       case 'configure':
@@ -138,24 +166,6 @@ export class InteractiveTui {
         }
         console.log(`  • Core:     ${instance ? chalk.green(`Online (PID ${instance.pid}, Port ${instance.port})`) : chalk.yellow('Offline')}`);
         console.log(`  • Traffic:  ${stats.totalRequests} total requests (${stats.activeRequests} active), last latency: ${stats.lastLatencyMs}ms\n`);
-        break;
-
-      case 'm':
-      case 'models':
-        console.log(chalk.cyan('\n[TUI] Loading Antigravity Models:'));
-        const models = await antigravityCore.getAvailableModels();
-        const keys = Object.keys(models);
-        if (keys.length > 0) {
-          for (const k of keys.slice(0, 15)) {
-            console.log(`  • ${chalk.bold.cyan(k.padEnd(28))} ${models[k].modelProvider || 'Google'} (max ${models[k].maxTokens} tokens)`);
-          }
-          if (keys.length > 15) {
-            console.log(chalk.gray(`  ... and ${keys.length - 15} more models.`));
-          }
-        } else {
-          console.log(chalk.yellow('  Default aliases: gemini-3.7-flash-high, claude-sonnet-4-6, gemini-pro-agent'));
-        }
-        console.log('');
         break;
 
       case 'd':
@@ -187,9 +197,9 @@ export class InteractiveTui {
       case 'h':
       case '?':
         console.log(chalk.cyan('\n[TUI] Available Commands:'));
+        console.log(`  • ${chalk.bold('models')}    (${chalk.bold('m')}): Interactive arrow-key model selector & 1-token health ping`);
         console.log(`  • ${chalk.bold('configure')} (${chalk.bold('c')}): Auto-configure Cursor, Continue, Aider, Claude Code`);
         console.log(`  • ${chalk.bold('status')}    (${chalk.bold('s')}): Refresh live Google account info & model quota`);
-        console.log(`  • ${chalk.bold('models')}    (${chalk.bold('m')}): List available Antigravity models`);
         console.log(`  • ${chalk.bold('doctor')}    (${chalk.bold('d')}): Test Antigravity connection & RPC`);
         console.log(`  • ${chalk.bold('clear')}     (${chalk.bold('cls')}): Clear screen and redraw banner`);
         console.log(`  • ${chalk.bold('quit')}      (${chalk.bold('q')}): Stop server and exit\n`);
