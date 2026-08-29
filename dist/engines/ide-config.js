@@ -47,7 +47,7 @@ class IdeConfigurator {
                 }
             }
             settings['cursor.openAiBaseUrl'] = openaiUrl;
-            settings['cursor.openAiApiKey'] = 'gravity-bridge';
+            settings['cursor.openAiApiKey'] = 'open-gravity';
             settings['cursor.overrideOpenAiBaseUrl'] = true;
             settings['cursor.customModels'] = [
                 'gemini-3.7-flash-high',
@@ -57,10 +57,9 @@ class IdeConfigurator {
                 'gpt-oss-120b-medium',
             ];
             fs_1.default.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf-8');
-            // Also create .cursorrules in current workspace if present
             if (workspaceDir && fs_1.default.existsSync(workspaceDir)) {
                 const rulesPath = path_1.default.join(workspaceDir, '.cursorrules');
-                const rulesContent = `# Open Gravity Configuration\n# Base URL: ${openaiUrl}\n# Default Model: gemini-3.7-flash-high\n`;
+                const rulesContent = `# Open Gravity\n# Base URL: ${openaiUrl}\n# Default Model: gemini-3.7-flash-high\n`;
                 if (!fs_1.default.existsSync(rulesPath)) {
                     fs_1.default.writeFileSync(rulesPath, rulesContent, 'utf-8');
                 }
@@ -69,7 +68,7 @@ class IdeConfigurator {
                 ide: 'Cursor',
                 filePath: settingsPath,
                 success: true,
-                message: `Injected Open Gravity OpenAI endpoint (${openaiUrl}) and model catalog into Cursor settings.`,
+                message: `Injected Open Gravity OpenAI endpoint into Cursor settings.`,
             };
         }
         catch (e) {
@@ -106,24 +105,23 @@ class IdeConfigurator {
                     provider: 'openai',
                     model: 'gemini-3.7-flash-high',
                     apiBase: openaiUrl,
-                    apiKey: 'gravity-bridge',
+                    apiKey: 'open-gravity',
                 },
                 {
                     title: 'Antigravity Claude Sonnet',
                     provider: 'openai',
                     model: 'claude-sonnet-4-6',
                     apiBase: openaiUrl,
-                    apiKey: 'gravity-bridge',
+                    apiKey: 'open-gravity',
                 },
                 {
                     title: 'Antigravity Gemini Pro Agent',
                     provider: 'openai',
                     model: 'gemini-pro-agent',
                     apiBase: openaiUrl,
-                    apiKey: 'gravity-bridge',
+                    apiKey: 'open-gravity',
                 },
             ];
-            // Filter out previous duplicate Open Gravity models
             configJson.models = configJson.models.filter((m) => !m.title?.startsWith('Antigravity'));
             configJson.models.unshift(...ogModels);
             fs_1.default.writeFileSync(continuePath, JSON.stringify(configJson, null, 2), 'utf-8');
@@ -149,7 +147,7 @@ class IdeConfigurator {
         const targetDir = workspaceDir || os_1.default.homedir();
         const aiderPath = path_1.default.join(targetDir, '.aider.conf.yml');
         try {
-            const aiderYaml = `# Open Gravity configuration for Aider\nopenai-api-base: ${openaiUrl}\nopenai-api-key: gravity-bridge\nmodel: openai/gemini-3.7-flash-high\nstream: true\n`;
+            const aiderYaml = `openai-api-base: ${openaiUrl}\nopenai-api-key: open-gravity\nmodel: openai/gemini-3.7-flash-high\nstream: true\n`;
             fs_1.default.writeFileSync(aiderPath, aiderYaml, 'utf-8');
             return {
                 ide: 'Aider',
@@ -168,42 +166,27 @@ class IdeConfigurator {
         }
     }
     static configureClaudeCode() {
-        const config = config_1.configManager.get();
-        const anthropicUrl = `http://${config.host}:${config.port}`;
         const home = os_1.default.homedir();
+        const claudeJsonPath = path_1.default.join(home, '.claude.json');
         try {
-            // 1. Inject complete login bypass into ~/.claude.json
-            claude_launcher_1.ClaudeLauncher.bypassLoginAndPrepareConfig();
-            // 2. Create a ready-to-run wrapper batch script in user directory
-            const batPath = path_1.default.join(home, 'claude-og.bat');
-            const batContent = `@echo off\nset ANTHROPIC_BASE_URL=${anthropicUrl}\nset ANTHROPIC_API_KEY=sk-ant-api03-gravity-bridge-bypass-key-1234567890\nset CLAUDE_BASE_URL=${anthropicUrl}\nset DISABLE_AUTOUPDATES=1\nclaude %*\n`;
-            fs_1.default.writeFileSync(batPath, batContent, 'utf-8');
-            // 3. Create shortcut in project directory if exists
-            const projBat = path_1.default.join(process.cwd(), 'claude-og.bat');
-            fs_1.default.writeFileSync(projBat, batContent, 'utf-8');
-            // 4. Also create shell script for Git Bash / WSL
-            const shPath = path_1.default.join(home, 'claude-og.sh');
-            const shContent = `#!/usr/bin/env bash\nexport ANTHROPIC_BASE_URL="${anthropicUrl}"\nexport ANTHROPIC_API_KEY="sk-ant-api03-gravity-bridge-bypass-key-1234567890"\nexport CLAUDE_BASE_URL="${anthropicUrl}"\nexport DISABLE_AUTOUPDATES="1"\nclaude "$@"\n`;
-            fs_1.default.writeFileSync(shPath, shContent, 'utf-8');
+            claude_launcher_1.ClaudeLauncher.applyLoginBypass();
             return {
                 ide: 'Claude Code',
-                filePath: batPath,
+                filePath: claudeJsonPath,
                 success: true,
-                message: `Injected login bypass into ~/.claude.json & created 'claude-og' launcher.`,
+                message: `Injected login bypass into ~/.claude.json`,
             };
         }
         catch (e) {
             return {
                 ide: 'Claude Code',
-                filePath: home,
+                filePath: claudeJsonPath,
                 success: false,
                 message: e.message,
             };
         }
     }
     static configureVSCode(workspaceDir) {
-        const config = config_1.configManager.get();
-        const openaiUrl = `http://${config.host}:${config.port}/v1`;
         let settingsPath = '';
         if (workspaceDir && fs_1.default.existsSync(workspaceDir)) {
             const vscodeDir = path_1.default.join(workspaceDir, '.vscode');

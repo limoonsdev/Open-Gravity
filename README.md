@@ -4,7 +4,7 @@
 
 # Open Gravity
 
-**Universal local AI Proxy & interactive TUI bridging your Google Antigravity models to Claude Code, Codex, Aider, Cursor, and any agent.**
+**Universal local AI Proxy connecting Google Antigravity models to Claude Code, Codex, Aider, Cursor, and any AI agent.**
 
 [![Node.js](https://img.shields.io/badge/Node.js-v18%2B-green.svg)](https://nodejs.org)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.7-blue.svg)](https://www.typescriptlang.org/)
@@ -17,157 +17,94 @@
 
 ---
 
-## What is Open Gravity?
+## Overview
 
-If you have a **Google AI Pro / Antigravity** subscription, you have access to Google's flagship reasoning models (**Gemini 3.7 Flash High**, **Gemini Pro Agent**, **Claude Sonnet**, **GPT-OSS 120B**).
+Open Gravity runs locally on your machine, hooks into your active Google Antigravity session, and serves standard Anthropic Messages and OpenAI Chat Completions API endpoints.
 
-However, external tools like Anthropic's **Claude Code CLI (`claude`)**, **Codex**, **Aider**, or **Cursor IDE** usually require separate pay-per-token API keys.
-
-**Open Gravity bridges this gap**: it runs locally in your terminal, auto-detects your active Antigravity session, and serves standard Anthropic and OpenAI API endpoints. All requests from your external tools are executed through your Google Pro subscription with zero additional API costs.
-
-> [!IMPORTANT]
-> **Keep Antigravity open in the background.**  
-> Open Gravity connects to Antigravity's local language server daemon, using your authenticated Google account and Pro tier quota. Zero extra API keys needed.
+This allows external AI coding tools (**Claude Code**, **Codex**, **Aider**, **Cursor**) to use your logged-in Google Pro subscription and reasoning models (**Gemini 3.7 Flash High**, **Claude Sonnet**, **Gemini Pro Agent**, **GPT-OSS 120B**) without requiring separate third-party API keys.
 
 ---
 
 ## Features
 
-- **Interactive Terminal TUI**: Type runtime commands (`configure`, `status`, `models`, `doctor`, `clear`) directly into the running server without stopping it.
-- **Automatic IDE Auto-Configuration**: Run `configure` or `open-gravity configure` to automatically write and update config files for Cursor, Continue.dev, Aider, and Claude Code.
-- **Dual API Emulation**: Concurrently serves Anthropic Messages (`/v1/messages`) and OpenAI Chat Completions (`/v1/chat/completions`).
-- **Real-Time Token Streaming**: Full Server-Sent Events (SSE) streaming support.
-- **28+ Models Available**: Instant access to `gemini-3.7-flash-high`, `gemini-pro-agent`, `claude-sonnet-4-6`, `claude-opus-4-6-thinking`, `gpt-oss-120b-medium`, etc.
-- **Account & Quota Visibility**: Detects your authenticated Google account (`name` / `email`), active plan, and remaining model quota with reset times.
+- **Claude Code Instant Launch & Login Bypass**: Run `open-gravity claude` to launch Anthropic's official Claude Code CLI with zero login prompts.
+- **Interactive Terminal TUI**: Fast command interface (`models`, `configure`, `status`, `doctor`, `clear`, `quit`) running alongside the live proxy server.
+- **Interactive Model Selector**: Arrow-key navigation (`↑` `↓`), real-time quota indicators, and 1-token health ping probes (`t`).
+- **1-Click IDE Auto-Configuration**: Auto-configures settings for Cursor, Continue.dev, Aider, and Claude Code with `open-gravity configure`.
+- **Zero Configuration**: Automatically discovers Antigravity daemon process, port, and CSRF token.
 
 ---
 
 ## Quick Start
 
-### 1. Installation
+### 1. Build and Compile
 
 ```bash
 git clone https://github.com/limoonsdev/Open-Gravity.git
 cd Open-Gravity
 npm install
-npm run build
+npm run compile
 ```
 
 ### 2. Auto-Configure Your Tools
 
-Run the 1-click configurator to automatically configure all your installed IDEs and CLIs:
-
 ```bash
-node dist/index.js configure
+open-gravity configure
 ```
 
-This automatically configures:
-- **Cursor IDE**: sets custom models and points the OpenAI Base URL to Open Gravity.
-- **Continue.dev**: adds Antigravity models to `~/.continue/config.json`.
-- **Aider**: creates `.aider.conf.yml` with `gemini-3.7-flash-high`.
-- **Claude Code**: creates global `claude-og` launcher script with `ANTHROPIC_BASE_URL`.
-
-### 3. Start the Server & Interactive TUI
+### 3. Start the Server
 
 ```bash
-npm start
-# Or with options:
-node dist/index.js start --port 8080
+open-gravity start
 ```
 
 ---
 
-## Interactive Runtime TUI Commands
+## Claude Code CLI Usage
 
-While Open Gravity is running and serving requests, you can interact with it in real time:
+To launch Claude Code with automatic login bypass:
 
-| Command / Hotkey | Description |
-|---|---|
-| `configure` / `c` | Re-run auto-configuration for Cursor, Continue, Aider, Claude Code |
-| `status` / `s` | Refresh and display live Google account info and model quota |
-| `models` / `m` | List available Antigravity models and context limits |
-| `doctor` / `d` | Run live health checks on Antigravity daemon and RPC connection |
-| `clear` / `cls` | Clear terminal screen and redraw status header |
-| `quit` / `q` | Cleanly stop the server and exit |
+```bash
+open-gravity claude
+```
+
+Or from the interactive TUI prompt while the server is running:
+```text
+og > claude
+```
 
 ---
 
-## Manual Agent Setup
+## Runtime TUI Commands
 
-If you prefer to configure tools manually via environment variables:
+While Open Gravity is running:
 
-### 🟣 Claude Code CLI (`claude`)
+| Command | Hotkey | Description |
+|---|---|---|
+| `claude` | `cl` | Launch Claude Code with automatic login bypass |
+| `models` | `m` | Open interactive arrow-key model selector & 1-token health ping |
+| `configure` | `c` | Re-run auto-configuration for Cursor, Continue, Aider, Claude Code |
+| `status` | `s` | Refresh Google account session, plan, and model quota |
+| `doctor` | `d` | Run live Antigravity diagnostics and RPC validation |
+| `clear` | `cls` | Clear terminal screen and redraw status header |
+| `quit` | `q` | Stop the server and exit |
 
-**Windows PowerShell:**
+---
+
+## Manual Environment Configuration
+
+### Anthropic / Claude Code
 ```powershell
 $env:ANTHROPIC_BASE_URL = "http://127.0.0.1:8080"
-$env:ANTHROPIC_API_KEY = "gravity-bridge"
+$env:ANTHROPIC_API_KEY = "sk-ant-api03-open-gravity-bypass"
 claude
 ```
 
-**Linux / macOS / Bash:**
-```bash
-export ANTHROPIC_BASE_URL="http://127.0.0.1:8080"
-export ANTHROPIC_API_KEY="gravity-bridge"
-claude
-```
-
----
-
-### 🟢 Codex CLI & Python OpenAI SDK
-
-**Windows PowerShell:**
+### OpenAI / Codex / Cursor
 ```powershell
 $env:OPENAI_BASE_URL = "http://127.0.0.1:8080/v1"
-$env:OPENAI_API_KEY = "gravity-bridge"
-codex
+$env:OPENAI_API_KEY = "open-gravity"
 ```
-
-**Python SDK:**
-```python
-from openai import OpenAI
-
-client = OpenAI(
-    base_url="http://127.0.0.1:8080/v1",
-    api_key="gravity-bridge"
-)
-
-response = client.chat.completions.create(
-    model="gemini-3.7-flash-high",
-    messages=[{"role": "user", "content": "Write a quicksort in Rust."}],
-    stream=True
-)
-
-for chunk in response:
-    if chunk.choices[0].delta.content:
-        print(chunk.choices[0].delta.content, end="", flush=True)
-```
-
----
-
-### ⚡ Aider CLI
-
-```bash
-aider --openai-api-base http://127.0.0.1:8080/v1 \
-      --openai-api-key gravity-bridge \
-      --model openai/gemini-3.7-flash-high
-```
-
----
-
-### 💻 Cursor IDE
-
-In **Cursor Settings > Models > OpenAI API Key**:
-- **Override OpenAI Base URL**: `http://127.0.0.1:8080/v1`
-- **API Key**: `gravity-bridge`
-- **Models**: `gemini-3.7-flash-high`, `claude-sonnet-4-6`, `gemini-pro-agent`
-
----
-
-## Security
-
-- **100% Local Loopback**: All proxy traffic stays on `127.0.0.1`.
-- **Local CSRF Validation**: Communicates directly with your local Antigravity Language Server daemon.
 
 ---
 

@@ -1,7 +1,6 @@
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-import { logger } from '../utils/logger';
 import { configManager } from '../utils/config';
 import { ClaudeLauncher } from './claude-launcher';
 
@@ -51,7 +50,7 @@ export class IdeConfigurator {
       }
 
       settings['cursor.openAiBaseUrl'] = openaiUrl;
-      settings['cursor.openAiApiKey'] = 'gravity-bridge';
+      settings['cursor.openAiApiKey'] = 'open-gravity';
       settings['cursor.overrideOpenAiBaseUrl'] = true;
       settings['cursor.customModels'] = [
         'gemini-3.7-flash-high',
@@ -63,10 +62,9 @@ export class IdeConfigurator {
 
       fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf-8');
 
-      // Also create .cursorrules in current workspace if present
       if (workspaceDir && fs.existsSync(workspaceDir)) {
         const rulesPath = path.join(workspaceDir, '.cursorrules');
-        const rulesContent = `# Open Gravity Configuration\n# Base URL: ${openaiUrl}\n# Default Model: gemini-3.7-flash-high\n`;
+        const rulesContent = `# Open Gravity\n# Base URL: ${openaiUrl}\n# Default Model: gemini-3.7-flash-high\n`;
         if (!fs.existsSync(rulesPath)) {
           fs.writeFileSync(rulesPath, rulesContent, 'utf-8');
         }
@@ -76,7 +74,7 @@ export class IdeConfigurator {
         ide: 'Cursor',
         filePath: settingsPath,
         success: true,
-        message: `Injected Open Gravity OpenAI endpoint (${openaiUrl}) and model catalog into Cursor settings.`,
+        message: `Injected Open Gravity OpenAI endpoint into Cursor settings.`,
       };
     } catch (e: any) {
       return {
@@ -113,25 +111,24 @@ export class IdeConfigurator {
           provider: 'openai',
           model: 'gemini-3.7-flash-high',
           apiBase: openaiUrl,
-          apiKey: 'gravity-bridge',
+          apiKey: 'open-gravity',
         },
         {
           title: 'Antigravity Claude Sonnet',
           provider: 'openai',
           model: 'claude-sonnet-4-6',
           apiBase: openaiUrl,
-          apiKey: 'gravity-bridge',
+          apiKey: 'open-gravity',
         },
         {
           title: 'Antigravity Gemini Pro Agent',
           provider: 'openai',
           model: 'gemini-pro-agent',
           apiBase: openaiUrl,
-          apiKey: 'gravity-bridge',
+          apiKey: 'open-gravity',
         },
       ];
 
-      // Filter out previous duplicate Open Gravity models
       configJson.models = configJson.models.filter((m: any) => !m.title?.startsWith('Antigravity'));
       configJson.models.unshift(...ogModels);
 
@@ -156,12 +153,11 @@ export class IdeConfigurator {
   public static configureAider(workspaceDir?: string): ConfigResult {
     const config = configManager.get();
     const openaiUrl = `http://${config.host}:${config.port}/v1`;
-
     const targetDir = workspaceDir || os.homedir();
     const aiderPath = path.join(targetDir, '.aider.conf.yml');
 
     try {
-      const aiderYaml = `# Open Gravity configuration for Aider\nopenai-api-base: ${openaiUrl}\nopenai-api-key: gravity-bridge\nmodel: openai/gemini-3.7-flash-high\nstream: true\n`;
+      const aiderYaml = `openai-api-base: ${openaiUrl}\nopenai-api-key: open-gravity\nmodel: openai/gemini-3.7-flash-high\nstream: true\n`;
       fs.writeFileSync(aiderPath, aiderYaml, 'utf-8');
 
       return {
@@ -181,38 +177,22 @@ export class IdeConfigurator {
   }
 
   public static configureClaudeCode(): ConfigResult {
-    const config = configManager.get();
-    const anthropicUrl = `http://${config.host}:${config.port}`;
     const home = os.homedir();
+    const claudeJsonPath = path.join(home, '.claude.json');
 
     try {
-      // 1. Inject complete login bypass into ~/.claude.json
-      ClaudeLauncher.bypassLoginAndPrepareConfig();
-
-      // 2. Create a ready-to-run wrapper batch script in user directory
-      const batPath = path.join(home, 'claude-og.bat');
-      const batContent = `@echo off\nset ANTHROPIC_BASE_URL=${anthropicUrl}\nset ANTHROPIC_API_KEY=sk-ant-api03-gravity-bridge-bypass-key-1234567890\nset CLAUDE_BASE_URL=${anthropicUrl}\nset DISABLE_AUTOUPDATES=1\nclaude %*\n`;
-      fs.writeFileSync(batPath, batContent, 'utf-8');
-
-      // 3. Create shortcut in project directory if exists
-      const projBat = path.join(process.cwd(), 'claude-og.bat');
-      fs.writeFileSync(projBat, batContent, 'utf-8');
-
-      // 4. Also create shell script for Git Bash / WSL
-      const shPath = path.join(home, 'claude-og.sh');
-      const shContent = `#!/usr/bin/env bash\nexport ANTHROPIC_BASE_URL="${anthropicUrl}"\nexport ANTHROPIC_API_KEY="sk-ant-api03-gravity-bridge-bypass-key-1234567890"\nexport CLAUDE_BASE_URL="${anthropicUrl}"\nexport DISABLE_AUTOUPDATES="1"\nclaude "$@"\n`;
-      fs.writeFileSync(shPath, shContent, 'utf-8');
+      ClaudeLauncher.applyLoginBypass();
 
       return {
         ide: 'Claude Code',
-        filePath: batPath,
+        filePath: claudeJsonPath,
         success: true,
-        message: `Injected login bypass into ~/.claude.json & created 'claude-og' launcher.`,
+        message: `Injected login bypass into ~/.claude.json`,
       };
     } catch (e: any) {
       return {
         ide: 'Claude Code',
-        filePath: home,
+        filePath: claudeJsonPath,
         success: false,
         message: e.message,
       };
@@ -220,9 +200,6 @@ export class IdeConfigurator {
   }
 
   public static configureVSCode(workspaceDir?: string): ConfigResult {
-    const config = configManager.get();
-    const openaiUrl = `http://${config.host}:${config.port}/v1`;
-
     let settingsPath = '';
     if (workspaceDir && fs.existsSync(workspaceDir)) {
       const vscodeDir = path.join(workspaceDir, '.vscode');

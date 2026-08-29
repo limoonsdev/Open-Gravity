@@ -1,20 +1,19 @@
 {
   "name": "open-gravity",
   "version": "1.0.0",
-  "description": "Universal local AI Proxy & Bridge connecting Google Antigravity models to Claude Code, Codex, Aider, Cursor, and any AI agent.",
+  "description": "Universal local AI Proxy connecting Google Antigravity models to Claude Code, Codex, Aider, Cursor, and any AI agent.",
   "main": "dist/index.js",
   "bin": {
     "open-gravity": "./bin/gravity-bridge.js",
     "opengravity": "./bin/gravity-bridge.js",
-    "og": "./bin/gravity-bridge.js",
-    "gravity-bridge": "./bin/gravity-bridge.js"
+    "og": "./bin/gravity-bridge.js"
   },
   "scripts": {
     "build": "tsc && powershell -Command \"Copy-Item src\\web\\index.html -Destination dist\\web\\index.html -Force\"",
     "bundle": "npm run build && npx @vercel/ncc build dist/index.js -o build",
     "compile": "npm run bundle && node --experimental-sea-config sea-config.json && powershell -Command \"Copy-Item (Get-Command node).Source open-gravity.exe -Force\" && npx postject open-gravity.exe NODE_SEA_BLOB sea-prep.blob --sentinel-fuse NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2",
     "start": "node dist/index.js start",
-    "dev": "ts-node src/index.ts start",
+    "claude": "node dist/index.js claude",
     "status": "node dist/index.js status",
     "models": "node dist/index.js models",
     "doctor": "node dist/index.js doctor",

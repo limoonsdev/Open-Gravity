@@ -4,12 +4,45 @@ import os from 'os';
 import { spawn } from 'child_process';
 import chalk from 'chalk';
 import { configManager } from '../utils/config';
-import { AntigravityDiscovery } from './discovery';
 
 export class ClaudeLauncher {
-  public static bypassLoginAndPrepareConfig(): string {
+  public static findClaudeExecutable(): string | null {
     const home = os.homedir();
-    const claudeJsonPath = path.join(home, '.claude.json');
+    const localAppData = process.env.LOCALAPPDATA || path.join(home, 'AppData', 'Local');
+
+    const candidates = [
+      path.join(home, '.local', 'bin', 'claude.exe'),
+      path.join(home, '.claude', 'bin', 'claude.exe'),
+      path.join(localAppData, 'Programs', 'claude', 'claude.exe'),
+      path.join(localAppData, 'Programs', 'Claude', 'claude.exe'),
+    ];
+
+    for (const c of candidates) {
+      if (fs.existsSync(c)) return c;
+    }
+
+    const packagesDir = path.join(localAppData, 'Packages');
+    if (fs.existsSync(packagesDir)) {
+      try {
+        const pkgs = fs.readdirSync(packagesDir).filter(p => p.startsWith('Claude_'));
+        for (const pkg of pkgs) {
+          const codeDir = path.join(packagesDir, pkg, 'LocalCache', 'Roaming', 'Claude', 'claude-code');
+          if (fs.existsSync(codeDir)) {
+            const versions = fs.readdirSync(codeDir);
+            for (const v of versions) {
+              const exe = path.join(codeDir, v, 'claude.exe');
+              if (fs.existsSync(exe)) return exe;
+            }
+          }
+        }
+      } catch {}
+    }
+
+    return null;
+  }
+
+  public static applyLoginBypass(): void {
+    const claudeJsonPath = path.join(os.homedir(), '.claude.json');
 
     try {
       let config: Record<string, any> = {};
@@ -21,12 +54,10 @@ export class ClaudeLauncher {
         }
       }
 
-      // Complete login bypass & onboarding skip payload
       config.hasCompletedOnboarding = true;
       config.autoUpdates = false;
-      config.primaryApiKey = 'sk-ant-api03-gravity-bridge-bypass-key-1234567890';
-      
-      // Trust current working directory if exists
+      config.primaryApiKey = 'sk-ant-api03-open-gravity-bypass';
+
       const cwd = process.cwd();
       if (!config.projects) config.projects = {};
       if (!config.projects[cwd]) {
@@ -45,26 +76,16 @@ export class ClaudeLauncher {
       }
 
       fs.writeFileSync(claudeJsonPath, JSON.stringify(config, null, 2), 'utf-8');
-      return claudeJsonPath;
-    } catch (e: any) {
-      return '';
-    }
+    } catch {}
   }
 
   public static async launchClaude(extraArgs: string[] = []): Promise<void> {
     const config = configManager.get();
-    const port = config.port;
-    const host = config.host;
-    const baseUrl = `http://${host}:${port}`;
-    const bypassApiKey = 'sk-ant-api03-gravity-bridge-bypass-key-1234567890';
+    const baseUrl = `http://${config.host}:${config.port}`;
+    const bypassApiKey = 'sk-ant-api03-open-gravity-bypass';
 
-    console.log(chalk.cyan('\n🚀 [Open Gravity] Preparing Claude Code with Login Bypass...'));
+    this.applyLoginBypass();
 
-    // 1. Prepare ~/.claude.json bypass
-    this.bypassLoginAndPrepareConfig();
-    console.log(chalk.green('✔ Authentication bypass injected into ~/.claude.json'));
-
-    // 2. Prepare environment variables
     const env = {
       ...process.env,
       ANTHROPIC_BASE_URL: baseUrl,
@@ -74,36 +95,30 @@ export class ClaudeLauncher {
       NODE_TLS_REJECT_UNAUTHORIZED: '0',
     };
 
-    console.log(chalk.green(`✔ Endpoint routed to: ${chalk.bold(baseUrl)} (Antigravity Bridge)`));
-    console.log(chalk.gray('  Launching Claude Code in interactive terminal...\n'));
+    const exe = this.findClaudeExecutable();
 
-    // 3. Find Claude command
-    const isWin = process.platform === 'win32';
-    
-    // Command runner
-    let cmd = 'claude';
-    let args = extraArgs;
-
-    // Check if claude exists in PATH, otherwise use npx @anthropic-ai/claude-code
-    const child = isWin
-      ? spawn('cmd.exe', ['/c', 'claude', ...args], { env, stdio: 'inherit' })
-      : spawn('claude', args, { env, stdio: 'inherit' });
-
-    child.on('error', () => {
-      console.log(chalk.yellow('  `claude` command not in PATH, falling back to `npx @anthropic-ai/claude-code`...'));
-      const fallback = isWin
-        ? spawn('cmd.exe', ['/c', 'npx', '--yes', '@anthropic-ai/claude-code', ...args], { env, stdio: 'inherit' })
-        : spawn('npx', ['--yes', '@anthropic-ai/claude-code', ...args], { env, stdio: 'inherit' });
-
-      fallback.on('close', (code) => {
-        console.log(chalk.gray(`\n[Claude Code exited with code ${code ?? 0}]`));
+    if (exe) {
+      const child = spawn(exe, extraArgs, { env, stdio: 'inherit' });
+      return new Promise((resolve) => {
+        child.on('close', () => resolve());
       });
-    });
+    }
 
-    child.on('close', (code) => {
-      if (code !== null) {
-        console.log(chalk.gray(`\n[Claude Code exited with code ${code}]`));
-      }
+    const isWin = process.platform === 'win32';
+    return new Promise((resolve) => {
+      const child = isWin
+        ? spawn('cmd.exe', ['/c', 'claude', ...extraArgs], { env, stdio: 'inherit' })
+        : spawn('claude', extraArgs, { env, stdio: 'inherit' });
+
+      child.on('error', () => {
+        const fallback = isWin
+          ? spawn('cmd.exe', ['/c', 'npx', '--yes', '@anthropic-ai/claude-code', ...extraArgs], { env, stdio: 'inherit' })
+          : spawn('npx', ['--yes', '@anthropic-ai/claude-code', ...extraArgs], { env, stdio: 'inherit' });
+
+        fallback.on('close', () => resolve());
+      });
+
+      child.on('close', () => resolve());
     });
   }
 }
