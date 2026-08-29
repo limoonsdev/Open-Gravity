@@ -1,0 +1,60 @@
+{
+  "name": "open-gravity",
+  "version": "1.0.0",
+  "description": "Universal local AI Proxy & Bridge connecting Google Antigravity models to Claude Code, Codex, Aider, Cursor, and any AI agent.",
+  "main": "dist/index.js",
+  "bin": {
+    "open-gravity": "./bin/gravity-bridge.js",
+    "opengravity": "./bin/gravity-bridge.js",
+    "og": "./bin/gravity-bridge.js",
+    "gravity-bridge": "./bin/gravity-bridge.js"
+  },
+  "scripts": {
+    "build": "tsc && powershell -Command \"Copy-Item src\\web\\index.html -Destination dist\\web\\index.html -Force\"",
+    "bundle": "npm run build && npx @vercel/ncc build dist/index.js -o build",
+    "compile": "npm run bundle && node --experimental-sea-config sea-config.json && powershell -Command \"Copy-Item (Get-Command node).Source open-gravity.exe -Force\" && npx postject open-gravity.exe NODE_SEA_BLOB sea-prep.blob --sentinel-fuse NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2",
+    "start": "node dist/index.js start",
+    "dev": "ts-node src/index.ts start",
+    "status": "node dist/index.js status",
+    "models": "node dist/index.js models",
+    "doctor": "node dist/index.js doctor",
+    "configure": "node dist/index.js configure"
+  },
+  "keywords": [
+    "open-gravity",
+    "antigravity",
+    "gemini",
+    "claude-code",
+    "codex",
+    "aider",
+    "cursor",
+    "ai-proxy",
+    "openai-compatible",
+    "anthropic-compatible"
+  ],
+  "author": "Alexis",
+  "license": "MIT",
+  "dependencies": {
+    "boxen": "^7.1.1",
+    "chalk": "^4.1.2",
+    "commander": "^12.1.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "node-fetch": "^2.7.0",
+    "open": "^8.4.2",
+    "ora": "^5.4.1",
+    "uuid": "^10.0.0"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.17.19",
+    "@types/node-fetch": "^2.6.12",
+    "@types/uuid": "^10.0.0",
+    "@vercel/ncc": "^0.45.0",
+    "postject": "^1.0.0-alpha.6",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.7.3"
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "github.copilot.advanced": {
+    "debug": {
+      "overrideEngine": "gemini-3.7-flash-high"
+    }
+  }
+}
