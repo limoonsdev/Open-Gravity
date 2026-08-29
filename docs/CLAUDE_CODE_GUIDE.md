@@ -1,90 +1,61 @@
-# 🟣 Guide d'utilisation : Claude Code CLI avec Gravity Bridge
+# Claude Code Integration Guide (Automatic Login Bypass)
 
-Ce guide vous explique étape par étape comment utiliser l'outil officiel **Claude Code CLI (`claude`)** d'Anthropic en redirigeant 100% de ses requêtes vers les modèles de votre session **Google Antigravity** (Gemini 3.7 Flash High, Gemini Pro Agent, Claude Sonnet, etc.).
-
----
-
-## 📋 Prérequis
-
-1. **Google Antigravity** ouvert en arrière-plan (l'IDE / application de bureau).
-2. **Gravity Bridge** lancé sur votre machine :
-   ```bash
-   npm start
-   # ou
-   node dist/index.js start
-   ```
-3. L'outil **Claude Code CLI** installé :
-   ```bash
-   npm install -g @anthropic-ai/claude-code
-   ```
+**Open Gravity** includes a built-in authentication bypass for Anthropic's **Claude Code CLI (`claude`)**, allowing you to run Claude Code completely free of Anthropic login prompts and powered by your **Google Antigravity Pro** subscription.
 
 ---
 
-## 🚀 Configuration & Lancement
+## ⚡ Method 1: Instant 1-Click Launch (Recommended)
 
-### Option 1 : Windows PowerShell (Recommandé)
-
-Ouvrez un terminal PowerShell et exécutez :
+From your terminal or by double-clicking `launch-claude.bat`:
 
 ```powershell
-# Définir l'URL de base d'Anthropic vers votre Gravity Bridge local
+# Using the Open Gravity binary:
+open-gravity claude
+
+# Or via npm/Node:
+node dist/index.js claude
+
+# Or in the interactive TUI prompt, just type:
+og > claude
+```
+
+Open Gravity will automatically:
+1. Inject the login bypass into `~/.claude.json`.
+2. Configure `ANTHROPIC_BASE_URL` to route requests to your local Open Gravity proxy.
+3. Supply the mock authorization key `ANTHROPIC_API_KEY`.
+4. Launch the interactive Claude Code CLI directly in your terminal.
+
+---
+
+## 🛠️ Method 2: Auto-Configure Environment (`open-gravity configure`)
+
+Run:
+```bash
+open-gravity configure
+```
+
+This creates a global `claude-og.bat` script in your home directory. You can then launch Claude Code anytime with:
+
+```powershell
+claude-og
+```
+
+---
+
+## ⌨️ Method 3: Manual Environment Variables
+
+If you want to launch `claude` in an existing shell session:
+
+### Windows PowerShell:
+```powershell
 $env:ANTHROPIC_BASE_URL = "http://127.0.0.1:8080"
-
-# Définir la clé d'authentification locale du Bridge
-$env:ANTHROPIC_API_KEY = "gravity-bridge"
-
-# Lancer Claude Code
+$env:ANTHROPIC_API_KEY = "sk-ant-api03-gravity-bridge-bypass-key-1234567890"
 claude
 ```
 
-### Option 2 : Windows CMD (Invite de commandes)
-
-```cmd
-set ANTHROPIC_BASE_URL=http://127.0.0.1:8080
-set ANTHROPIC_API_KEY=gravity-bridge
-claude
-```
-
-### Option 3 : Linux / macOS / Git Bash
-
+### Linux / macOS / Git Bash:
 ```bash
 export ANTHROPIC_BASE_URL="http://127.0.0.1:8080"
-export ANTHROPIC_API_KEY="gravity-bridge"
+export ANTHROPIC_API_KEY="sk-ant-api03-gravity-bridge-bypass-key-1234567890"
 claude
 ```
-
----
-
-## ⚙️ Comment ça fonctionne sous le capot ?
-
-1. Lorsque vous posez une question ou demandez une modification de code à **Claude Code**, il envoie une requête `POST /v1/messages` avec vos fichiers et instructions.
-2. **Gravity Bridge** intercepte la requête au format Anthropic Messages API.
-3. Il convertit le schéma (tools, instructions système, historique) et le transmet directement au **Language Server de Google Antigravity**.
-4. La réponse générée par votre session Antigravity (avec votre quota et vos modèles Pro) est renvoyée en streaming temps réel (SSE) à Claude Code.
-
----
-
-## 🎯 Alias & Choix des modèles
-
-Gravity Bridge associe automatiquement les modèles demandés par Claude Code aux meilleurs modèles Antigravity :
-
-| Modèle demandé par Claude Code | Modèle Antigravity utilisé | Description |
-|---|---|---|
-| `claude-3-7-sonnet` / `claude-3-5-sonnet` | `claude-sonnet-4-6` ou `gemini-3.7-flash-high` | Ultra-rapide avec raisonnement |
-| `claude-3-opus` | `claude-opus-4-6-thinking` | Raisonnement profond |
-| `claude-3-5-haiku` | `gemini-3.7-flash-low` | Réponses instantanées |
-
----
-
-## 💡 Astuce : Créer un raccourci de lancement
-
-Créez un script `claude-gravity.bat` sur votre bureau :
-
-```bat
-@echo off
-set ANTHROPIC_BASE_URL=http://127.0.0.1:8080
-set ANTHROPIC_API_KEY=gravity-bridge
-claude %*
-```
-
-Il vous suffit ensuite de taper `claude-gravity` dans n'importe quel dossier pour coder avec Claude Code propulsé par Antigravity !

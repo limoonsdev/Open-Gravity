@@ -8,6 +8,7 @@ const fs_1 = __importDefault(require("fs"));
 const path_1 = __importDefault(require("path"));
 const os_1 = __importDefault(require("os"));
 const config_1 = require("../utils/config");
+const claude_launcher_1 = require("./claude-launcher");
 class IdeConfigurator {
     static configureAll(workspaceDir) {
         return [
@@ -171,19 +172,24 @@ class IdeConfigurator {
         const anthropicUrl = `http://${config.host}:${config.port}`;
         const home = os_1.default.homedir();
         try {
-            // 1. Create a ready-to-run wrapper batch script in user directory
+            // 1. Inject complete login bypass into ~/.claude.json
+            claude_launcher_1.ClaudeLauncher.bypassLoginAndPrepareConfig();
+            // 2. Create a ready-to-run wrapper batch script in user directory
             const batPath = path_1.default.join(home, 'claude-og.bat');
-            const batContent = `@echo off\nset ANTHROPIC_BASE_URL=${anthropicUrl}\nset ANTHROPIC_API_KEY=gravity-bridge\nclaude %*\n`;
+            const batContent = `@echo off\nset ANTHROPIC_BASE_URL=${anthropicUrl}\nset ANTHROPIC_API_KEY=sk-ant-api03-gravity-bridge-bypass-key-1234567890\nset CLAUDE_BASE_URL=${anthropicUrl}\nset DISABLE_AUTOUPDATES=1\nclaude %*\n`;
             fs_1.default.writeFileSync(batPath, batContent, 'utf-8');
-            // 2. Also create shell script for Git Bash / WSL
+            // 3. Create shortcut in project directory if exists
+            const projBat = path_1.default.join(process.cwd(), 'claude-og.bat');
+            fs_1.default.writeFileSync(projBat, batContent, 'utf-8');
+            // 4. Also create shell script for Git Bash / WSL
             const shPath = path_1.default.join(home, 'claude-og.sh');
-            const shContent = `#!/usr/bin/env bash\nexport ANTHROPIC_BASE_URL="${anthropicUrl}"\nexport ANTHROPIC_API_KEY="gravity-bridge"\nclaude "$@"\n`;
+            const shContent = `#!/usr/bin/env bash\nexport ANTHROPIC_BASE_URL="${anthropicUrl}"\nexport ANTHROPIC_API_KEY="sk-ant-api03-gravity-bridge-bypass-key-1234567890"\nexport CLAUDE_BASE_URL="${anthropicUrl}"\nexport DISABLE_AUTOUPDATES="1"\nclaude "$@"\n`;
             fs_1.default.writeFileSync(shPath, shContent, 'utf-8');
             return {
                 ide: 'Claude Code',
                 filePath: batPath,
                 success: true,
-                message: `Created 'claude-og' launcher at ${batPath} (sets ANTHROPIC_BASE_URL=${anthropicUrl})`,
+                message: `Injected login bypass into ~/.claude.json & created 'claude-og' launcher.`,
             };
         }
         catch (e) {

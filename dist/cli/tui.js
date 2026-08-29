@@ -10,6 +10,7 @@ const discovery_1 = require("../engines/discovery");
 const antigravity_core_1 = require("../engines/antigravity-core");
 const router_1 = require("../engines/router");
 const ide_config_1 = require("../engines/ide-config");
+const claude_launcher_1 = require("../engines/claude-launcher");
 const model_selector_1 = require("./model-selector");
 const logger_1 = require("../utils/logger");
 const config_1 = require("../utils/config");
@@ -111,14 +112,27 @@ class InteractiveTui {
         console.log(`    • Antigravity:  ${conn}`);
         console.log(`    • Default:      ${chalk_1.default.cyan(currentDef)}`);
         console.log('');
-        console.log(`  ${chalk_1.default.gray('Hotkeys/Commands:')} ${chalk_1.default.cyan('models')} (${chalk_1.default.bold('m')})  ${chalk_1.default.cyan('configure')} (${chalk_1.default.bold('c')})  ${chalk_1.default.cyan('status')} (${chalk_1.default.bold('s')})  ${chalk_1.default.cyan('doctor')} (${chalk_1.default.bold('d')})  ${chalk_1.default.cyan('clear')} (${chalk_1.default.bold('cls')})  ${chalk_1.default.cyan('quit')} (${chalk_1.default.bold('q')})`);
+        console.log(`  ${chalk_1.default.gray('Hotkeys/Commands:')} ${chalk_1.default.bold.magenta('claude')} (${chalk_1.default.bold('cl')})  ${chalk_1.default.cyan('models')} (${chalk_1.default.bold('m')})  ${chalk_1.default.cyan('configure')} (${chalk_1.default.bold('c')})  ${chalk_1.default.cyan('status')} (${chalk_1.default.bold('s')})  ${chalk_1.default.cyan('doctor')} (${chalk_1.default.bold('d')})  ${chalk_1.default.cyan('clear')} (${chalk_1.default.bold('cls')})  ${chalk_1.default.cyan('quit')} (${chalk_1.default.bold('q')})`);
         console.log(chalk_1.default.gray('  --------------------------------------------------------------------------------'));
         console.log('');
     }
     async handleCommand(cmd) {
         const parts = cmd.split(' ');
         const main = parts[0].toLowerCase();
+        const args = parts.slice(1);
         switch (main) {
+            case 'cl':
+            case 'claude':
+            case 'run-claude':
+                this.isSelectingModel = true;
+                if (this.rl) {
+                    this.rl.close();
+                    this.rl = null;
+                }
+                await claude_launcher_1.ClaudeLauncher.launchClaude(args);
+                this.isSelectingModel = false;
+                this.createReadline();
+                break;
             case 'm':
             case 'model':
             case 'models':
@@ -137,7 +151,7 @@ class InteractiveTui {
             case 'c':
             case 'config':
             case 'configure':
-                console.log(chalk_1.default.cyan('\n[TUI] Running automatic IDE configurator...'));
+                console.log(chalk_1.default.cyan('\n[TUI] Running automatic IDE configurator & Claude bypass...'));
                 const results = ide_config_1.IdeConfigurator.configureAll(process.cwd());
                 for (const r of results) {
                     console.log(`  ${r.success ? chalk_1.default.green('✔') : chalk_1.default.red('✖')} ${chalk_1.default.bold(r.ide.padEnd(12))} ${r.message}`);
@@ -186,6 +200,7 @@ class InteractiveTui {
             case 'h':
             case '?':
                 console.log(chalk_1.default.cyan('\n[TUI] Available Commands:'));
+                console.log(`  • ${chalk_1.default.bold('claude')}    (${chalk_1.default.bold('cl')}): Launch Claude Code with automatic login bypass`);
                 console.log(`  • ${chalk_1.default.bold('models')}    (${chalk_1.default.bold('m')}): Interactive arrow-key model selector & 1-token health ping`);
                 console.log(`  • ${chalk_1.default.bold('configure')} (${chalk_1.default.bold('c')}): Auto-configure Cursor, Continue, Aider, Claude Code`);
                 console.log(`  • ${chalk_1.default.bold('status')}    (${chalk_1.default.bold('s')}): Refresh live Google account info & model quota`);

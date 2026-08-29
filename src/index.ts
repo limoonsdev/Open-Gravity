@@ -7,6 +7,7 @@ import { modelsCommand } from './cli/commands/models';
 import { setupCommand } from './cli/commands/setup';
 import { configureCommand } from './cli/commands/configure';
 import { doctorCommand } from './cli/commands/doctor';
+import { ClaudeLauncher } from './engines/claude-launcher';
 import readline from 'readline';
 
 function preventWindowCloseOnError(err: any) {
@@ -30,18 +31,19 @@ program
 
 program
   .command('start', { isDefault: true })
-  .description('Start the Open Gravity proxy server (Default: auto-opens Web Dashboard when double-clicked)')
+  .description('Start the Open Gravity proxy server & interactive TUI')
   .option('-p, --port <number>', 'Local listening port', (val) => parseInt(val, 10))
   .option('-h, --host <string>', 'Local listening host (default: 127.0.0.1)')
   .option('-m, --model <string>', 'Default Antigravity model')
-  .option('-o, --open', 'Automatically open Web Dashboard in browser')
   .action((options) => {
-    // If double-clicked without arguments, default to opening the dashboard in browser
-    const isDoubleClicked = process.argv.length <= 2;
-    if (isDoubleClicked && options.open === undefined) {
-      options.open = true;
-    }
     startCommand(options);
+  });
+
+program
+  .command('claude [args...]')
+  .description('Launch Claude Code with automatic login bypass routed to Open Gravity')
+  .action(async (args) => {
+    await ClaudeLauncher.launchClaude(args || []);
   });
 
 program
@@ -60,7 +62,7 @@ program
 
 program
   .command('models')
-  .description('List all models available in Antigravity')
+  .description('Open interactive model selector and test 1-token health ping')
   .action(() => {
     modelsCommand();
   });

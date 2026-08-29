@@ -3,6 +3,7 @@ import path from 'path';
 import os from 'os';
 import { logger } from '../utils/logger';
 import { configManager } from '../utils/config';
+import { ClaudeLauncher } from './claude-launcher';
 
 export interface ConfigResult {
   ide: string;
@@ -185,21 +186,28 @@ export class IdeConfigurator {
     const home = os.homedir();
 
     try {
-      // 1. Create a ready-to-run wrapper batch script in user directory
+      // 1. Inject complete login bypass into ~/.claude.json
+      ClaudeLauncher.bypassLoginAndPrepareConfig();
+
+      // 2. Create a ready-to-run wrapper batch script in user directory
       const batPath = path.join(home, 'claude-og.bat');
-      const batContent = `@echo off\nset ANTHROPIC_BASE_URL=${anthropicUrl}\nset ANTHROPIC_API_KEY=gravity-bridge\nclaude %*\n`;
+      const batContent = `@echo off\nset ANTHROPIC_BASE_URL=${anthropicUrl}\nset ANTHROPIC_API_KEY=sk-ant-api03-gravity-bridge-bypass-key-1234567890\nset CLAUDE_BASE_URL=${anthropicUrl}\nset DISABLE_AUTOUPDATES=1\nclaude %*\n`;
       fs.writeFileSync(batPath, batContent, 'utf-8');
 
-      // 2. Also create shell script for Git Bash / WSL
+      // 3. Create shortcut in project directory if exists
+      const projBat = path.join(process.cwd(), 'claude-og.bat');
+      fs.writeFileSync(projBat, batContent, 'utf-8');
+
+      // 4. Also create shell script for Git Bash / WSL
       const shPath = path.join(home, 'claude-og.sh');
-      const shContent = `#!/usr/bin/env bash\nexport ANTHROPIC_BASE_URL="${anthropicUrl}"\nexport ANTHROPIC_API_KEY="gravity-bridge"\nclaude "$@"\n`;
+      const shContent = `#!/usr/bin/env bash\nexport ANTHROPIC_BASE_URL="${anthropicUrl}"\nexport ANTHROPIC_API_KEY="sk-ant-api03-gravity-bridge-bypass-key-1234567890"\nexport CLAUDE_BASE_URL="${anthropicUrl}"\nexport DISABLE_AUTOUPDATES="1"\nclaude "$@"\n`;
       fs.writeFileSync(shPath, shContent, 'utf-8');
 
       return {
         ide: 'Claude Code',
         filePath: batPath,
         success: true,
-        message: `Created 'claude-og' launcher at ${batPath} (sets ANTHROPIC_BASE_URL=${anthropicUrl})`,
+        message: `Injected login bypass into ~/.claude.json & created 'claude-og' launcher.`,
       };
     } catch (e: any) {
       return {

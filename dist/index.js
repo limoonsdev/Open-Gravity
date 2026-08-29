@@ -11,6 +11,7 @@ const models_1 = require("./cli/commands/models");
 const setup_1 = require("./cli/commands/setup");
 const configure_1 = require("./cli/commands/configure");
 const doctor_1 = require("./cli/commands/doctor");
+const claude_launcher_1 = require("./engines/claude-launcher");
 const readline_1 = __importDefault(require("readline"));
 function preventWindowCloseOnError(err) {
     console.error('\n[Open Gravity Error]:', err?.message || err);
@@ -29,18 +30,18 @@ program
     .version('1.0.0');
 program
     .command('start', { isDefault: true })
-    .description('Start the Open Gravity proxy server (Default: auto-opens Web Dashboard when double-clicked)')
+    .description('Start the Open Gravity proxy server & interactive TUI')
     .option('-p, --port <number>', 'Local listening port', (val) => parseInt(val, 10))
     .option('-h, --host <string>', 'Local listening host (default: 127.0.0.1)')
     .option('-m, --model <string>', 'Default Antigravity model')
-    .option('-o, --open', 'Automatically open Web Dashboard in browser')
     .action((options) => {
-    // If double-clicked without arguments, default to opening the dashboard in browser
-    const isDoubleClicked = process.argv.length <= 2;
-    if (isDoubleClicked && options.open === undefined) {
-        options.open = true;
-    }
     (0, start_1.startCommand)(options);
+});
+program
+    .command('claude [args...]')
+    .description('Launch Claude Code with automatic login bypass routed to Open Gravity')
+    .action(async (args) => {
+    await claude_launcher_1.ClaudeLauncher.launchClaude(args || []);
 });
 program
     .command('configure [ide]')
@@ -56,7 +57,7 @@ program
 });
 program
     .command('models')
-    .description('List all models available in Antigravity')
+    .description('Open interactive model selector and test 1-token health ping')
     .action(() => {
     (0, models_1.modelsCommand)();
 });
