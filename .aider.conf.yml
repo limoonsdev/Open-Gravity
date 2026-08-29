@@ -1,5 +1,0 @@
-# Open Gravity configuration for Aider
-openai-api-base: http://127.0.0.1:8080/v1
-openai-api-key: gravity-bridge
-model: openai/gemini-3.7-flash-high
-stream: true

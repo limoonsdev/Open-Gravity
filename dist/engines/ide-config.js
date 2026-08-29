@@ -7,17 +7,99 @@ exports.IdeConfigurator = void 0;
 const fs_1 = __importDefault(require("fs"));
 const path_1 = __importDefault(require("path"));
 const os_1 = __importDefault(require("os"));
+const child_process_1 = require("child_process");
 const config_1 = require("../utils/config");
 const claude_launcher_1 = require("./claude-launcher");
 class IdeConfigurator {
-    static configureAll(workspaceDir) {
-        return [
-            this.configureCursor(workspaceDir),
-            this.configureContinue(),
-            this.configureAider(workspaceDir),
-            this.configureClaudeCode(),
-            this.configureVSCode(workspaceDir),
+    static isCursorInstalled() {
+        const home = os_1.default.homedir();
+        if (process.platform === 'win32') {
+            const appdata = process.env.APPDATA || path_1.default.join(home, 'AppData', 'Roaming');
+            const local = process.env.LOCALAPPDATA || path_1.default.join(home, 'AppData', 'Local');
+            return fs_1.default.existsSync(path_1.default.join(appdata, 'Cursor')) || fs_1.default.existsSync(path_1.default.join(local, 'Programs', 'cursor'));
+        }
+        if (process.platform === 'darwin') {
+            return fs_1.default.existsSync(path_1.default.join(home, 'Library', 'Application Support', 'Cursor')) || fs_1.default.existsSync('/Applications/Cursor.app');
+        }
+        return fs_1.default.existsSync(path_1.default.join(home, '.config', 'Cursor'));
+    }
+    static isVSCodeInstalled() {
+        const home = os_1.default.homedir();
+        if (process.platform === 'win32') {
+            const appdata = process.env.APPDATA || path_1.default.join(home, 'AppData', 'Roaming');
+            return fs_1.default.existsSync(path_1.default.join(appdata, 'Code'));
+        }
+        if (process.platform === 'darwin') {
+            return fs_1.default.existsSync(path_1.default.join(home, 'Library', 'Application Support', 'Code')) || fs_1.default.existsSync('/Applications/Visual Studio Code.app');
+        }
+        return fs_1.default.existsSync(path_1.default.join(home, '.config', 'Code'));
+    }
+    static isClaudeCodeInstalled() {
+        const home = os_1.default.homedir();
+        const candidateExes = [
+            path_1.default.join(home, '.local', 'bin', 'claude.exe'),
+            path_1.default.join(home, '.claude', 'bin', 'claude.exe'),
+            path_1.default.join(home, '.claude.json'),
         ];
+        for (const c of candidateExes) {
+            if (fs_1.default.existsSync(c))
+                return true;
+        }
+        try {
+            (0, child_process_1.execSync)(process.platform === 'win32' ? 'where claude' : 'which claude', { stdio: 'ignore' });
+            return true;
+        }
+        catch {
+            return false;
+        }
+    }
+    static isAiderInstalled() {
+        try {
+            (0, child_process_1.execSync)(process.platform === 'win32' ? 'where aider' : 'which aider', { stdio: 'ignore' });
+            return true;
+        }
+        catch {
+            return false;
+        }
+    }
+    static isContinueInstalled() {
+        const home = os_1.default.homedir();
+        const cursorExt = path_1.default.join(home, '.cursor', 'extensions');
+        const vscodeExt = path_1.default.join(home, '.vscode', 'extensions');
+        if (fs_1.default.existsSync(cursorExt)) {
+            try {
+                if (fs_1.default.readdirSync(cursorExt).some(d => d.toLowerCase().includes('continue')))
+                    return true;
+            }
+            catch { }
+        }
+        if (fs_1.default.existsSync(vscodeExt)) {
+            try {
+                if (fs_1.default.readdirSync(vscodeExt).some(d => d.toLowerCase().includes('continue')))
+                    return true;
+            }
+            catch { }
+        }
+        return false;
+    }
+    static configureAll(workspaceDir) {
+        const results = [];
+        if (this.isCursorInstalled()) {
+            results.push(this.configureCursor(workspaceDir));
+        }
+        if (this.isClaudeCodeInstalled()) {
+            results.push(this.configureClaudeCode());
+        }
+        if (this.isVSCodeInstalled()) {
+            results.push(this.configureVSCode(workspaceDir));
+        }
+        if (this.isContinueInstalled()) {
+            results.push(this.configureContinue());
+        }
+        if (this.isAiderInstalled()) {
+            results.push(this.configureAider(workspaceDir));
+        }
+        return results;
     }
     static configureCursor(workspaceDir) {
         const config = config_1.configManager.get();
@@ -57,109 +139,17 @@ class IdeConfigurator {
                 'gpt-oss-120b-medium',
             ];
             fs_1.default.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf-8');
-            if (workspaceDir && fs_1.default.existsSync(workspaceDir)) {
-                const rulesPath = path_1.default.join(workspaceDir, '.cursorrules');
-                const rulesContent = `# Open Gravity\n# Base URL: ${openaiUrl}\n# Default Model: gemini-3.7-flash-high\n`;
-                if (!fs_1.default.existsSync(rulesPath)) {
-                    fs_1.default.writeFileSync(rulesPath, rulesContent, 'utf-8');
-                }
-            }
             return {
                 ide: 'Cursor',
                 filePath: settingsPath,
                 success: true,
-                message: `Injected Open Gravity OpenAI endpoint into Cursor settings.`,
+                message: `Injected Open Gravity endpoint (${openaiUrl})`,
             };
         }
         catch (e) {
             return {
                 ide: 'Cursor',
                 filePath: settingsPath,
-                success: false,
-                message: e.message,
-            };
-        }
-    }
-    static configureContinue() {
-        const config = config_1.configManager.get();
-        const openaiUrl = `http://${config.host}:${config.port}/v1`;
-        const continueDir = path_1.default.join(os_1.default.homedir(), '.continue');
-        const continuePath = path_1.default.join(continueDir, 'config.json');
-        try {
-            if (!fs_1.default.existsSync(continueDir))
-                fs_1.default.mkdirSync(continueDir, { recursive: true });
-            let configJson = { models: [] };
-            if (fs_1.default.existsSync(continuePath)) {
-                try {
-                    configJson = JSON.parse(fs_1.default.readFileSync(continuePath, 'utf-8'));
-                    if (!Array.isArray(configJson.models))
-                        configJson.models = [];
-                }
-                catch {
-                    configJson = { models: [] };
-                }
-            }
-            const ogModels = [
-                {
-                    title: 'Antigravity Gemini 3.7 Flash High',
-                    provider: 'openai',
-                    model: 'gemini-3.7-flash-high',
-                    apiBase: openaiUrl,
-                    apiKey: 'open-gravity',
-                },
-                {
-                    title: 'Antigravity Claude Sonnet',
-                    provider: 'openai',
-                    model: 'claude-sonnet-4-6',
-                    apiBase: openaiUrl,
-                    apiKey: 'open-gravity',
-                },
-                {
-                    title: 'Antigravity Gemini Pro Agent',
-                    provider: 'openai',
-                    model: 'gemini-pro-agent',
-                    apiBase: openaiUrl,
-                    apiKey: 'open-gravity',
-                },
-            ];
-            configJson.models = configJson.models.filter((m) => !m.title?.startsWith('Antigravity'));
-            configJson.models.unshift(...ogModels);
-            fs_1.default.writeFileSync(continuePath, JSON.stringify(configJson, null, 2), 'utf-8');
-            return {
-                ide: 'Continue.dev',
-                filePath: continuePath,
-                success: true,
-                message: `Added Antigravity models to Continue.dev configuration.`,
-            };
-        }
-        catch (e) {
-            return {
-                ide: 'Continue.dev',
-                filePath: continuePath,
-                success: false,
-                message: e.message,
-            };
-        }
-    }
-    static configureAider(workspaceDir) {
-        const config = config_1.configManager.get();
-        const openaiUrl = `http://${config.host}:${config.port}/v1`;
-        const targetDir = workspaceDir || os_1.default.homedir();
-        const aiderPath = path_1.default.join(targetDir, '.aider.conf.yml');
-        try {
-            const aiderYaml = `openai-api-base: ${openaiUrl}\nopenai-api-key: open-gravity\nmodel: openai/gemini-3.7-flash-high\nstream: true\n`;
-            fs_1.default.writeFileSync(aiderPath, aiderYaml, 'utf-8');
-            return {
-                ide: 'Aider',
-                filePath: aiderPath,
-                success: true,
-                message: `Created .aider.conf.yml pointing to ${openaiUrl}`,
-            };
-        }
-        catch (e) {
-            return {
-                ide: 'Aider',
-                filePath: aiderPath,
                 success: false,
                 message: e.message,
             };
@@ -195,15 +185,16 @@ class IdeConfigurator {
             settingsPath = path_1.default.join(vscodeDir, 'settings.json');
         }
         else {
+            const home = os_1.default.homedir();
             if (process.platform === 'win32') {
-                const appdata = process.env.APPDATA || path_1.default.join(os_1.default.homedir(), 'AppData', 'Roaming');
+                const appdata = process.env.APPDATA || path_1.default.join(home, 'AppData', 'Roaming');
                 settingsPath = path_1.default.join(appdata, 'Code', 'User', 'settings.json');
             }
             else if (process.platform === 'darwin') {
-                settingsPath = path_1.default.join(os_1.default.homedir(), 'Library', 'Application Support', 'Code', 'User', 'settings.json');
+                settingsPath = path_1.default.join(home, 'Library', 'Application Support', 'Code', 'User', 'settings.json');
             }
             else {
-                settingsPath = path_1.default.join(os_1.default.homedir(), '.config', 'Code', 'User', 'settings.json');
+                settingsPath = path_1.default.join(home, '.config', 'Code', 'User', 'settings.json');
             }
         }
         try {
@@ -229,13 +220,84 @@ class IdeConfigurator {
                 ide: 'VS Code',
                 filePath: settingsPath,
                 success: true,
-                message: `Updated VS Code settings at ${settingsPath}`,
+                message: `Updated VS Code settings`,
             };
         }
         catch (e) {
             return {
                 ide: 'VS Code',
                 filePath: settingsPath,
+                success: false,
+                message: e.message,
+            };
+        }
+    }
+    static configureContinue() {
+        const config = config_1.configManager.get();
+        const openaiUrl = `http://${config.host}:${config.port}/v1`;
+        const continueDir = path_1.default.join(os_1.default.homedir(), '.continue');
+        const continuePath = path_1.default.join(continueDir, 'config.json');
+        try {
+            if (!fs_1.default.existsSync(continueDir))
+                fs_1.default.mkdirSync(continueDir, { recursive: true });
+            let configJson = { models: [] };
+            if (fs_1.default.existsSync(continuePath)) {
+                try {
+                    configJson = JSON.parse(fs_1.default.readFileSync(continuePath, 'utf-8'));
+                    if (!Array.isArray(configJson.models))
+                        configJson.models = [];
+                }
+                catch {
+                    configJson = { models: [] };
+                }
+            }
+            const ogModels = [
+                {
+                    title: 'Antigravity Gemini 3.7 Flash High',
+                    provider: 'openai',
+                    model: 'gemini-3.7-flash-high',
+                    apiBase: openaiUrl,
+                    apiKey: 'open-gravity',
+                },
+            ];
+            configJson.models = configJson.models.filter((m) => !m.title?.startsWith('Antigravity'));
+            configJson.models.unshift(...ogModels);
+            fs_1.default.writeFileSync(continuePath, JSON.stringify(configJson, null, 2), 'utf-8');
+            return {
+                ide: 'Continue.dev',
+                filePath: continuePath,
+                success: true,
+                message: `Updated Continue.dev configuration.`,
+            };
+        }
+        catch (e) {
+            return {
+                ide: 'Continue.dev',
+                filePath: continuePath,
+                success: false,
+                message: e.message,
+            };
+        }
+    }
+    static configureAider(workspaceDir) {
+        const config = config_1.configManager.get();
+        const openaiUrl = `http://${config.host}:${config.port}/v1`;
+        const targetDir = workspaceDir || os_1.default.homedir();
+        const aiderPath = path_1.default.join(targetDir, '.aider.conf.yml');
+        try {
+            const aiderYaml = `openai-api-base: ${openaiUrl}\nopenai-api-key: open-gravity\nmodel: openai/gemini-3.7-flash-high\nstream: true\n`;
+            fs_1.default.writeFileSync(aiderPath, aiderYaml, 'utf-8');
+            return {
+                ide: 'Aider',
+                filePath: aiderPath,
+                success: true,
+                message: `Created .aider.conf.yml pointing to ${openaiUrl}`,
+            };
+        }
+        catch (e) {
+            return {
+                ide: 'Aider',
+                filePath: aiderPath,
                 success: false,
                 message: e.message,
             };
