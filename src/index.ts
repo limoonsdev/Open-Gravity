@@ -8,6 +8,7 @@ import { setupCommand } from './cli/commands/setup';
 import { configureCommand } from './cli/commands/configure';
 import { doctorCommand } from './cli/commands/doctor';
 import { ClaudeLauncher } from './engines/claude-launcher';
+import { ClaudeGuide } from './engines/claude-guide';
 import readline from 'readline';
 
 function preventWindowCloseOnError(err: any) {
@@ -26,7 +27,7 @@ const program = new Command();
 
 program
   .name('open-gravity')
-  .description('Universal local AI Proxy & Bridge connecting Google Antigravity models to Claude Code, Codex, Aider, Cursor, and any AI agent.')
+  .description('Universal local AI Proxy connecting Google Antigravity models to Claude Code, Codex, Aider, Cursor, and any AI agent.')
   .version('1.0.0');
 
 program
@@ -41,16 +42,24 @@ program
 
 program
   .command('claude [args...]')
-  .description('Launch Claude Code with automatic login bypass routed to Open Gravity')
+  .description('Launch Claude Code with automatic login bypass')
   .action(async (args) => {
     await ClaudeLauncher.launchClaude(args || []);
   });
 
 program
+  .command('guide [tool]')
+  .description('Display integrated guide for Claude Code, Cursor, Aider, Codex')
+  .action((tool) => {
+    ClaudeGuide.printGuide();
+  });
+
+program
   .command('configure [ide]')
-  .description('Automatically write config files for Cursor, Continue, Aider, Claude Code, or all')
+  .description('Automatically write config files for Cursor, Continue, Aider, Claude Code, and CLAUDE.md')
   .action((ide) => {
     configureCommand(ide);
+    ClaudeGuide.generateClaudeMd();
   });
 
 program

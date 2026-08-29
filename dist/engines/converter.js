@@ -295,10 +295,13 @@ class ProtocolConverter {
     /**
      * Flattens messages array to a single prompt string for Antigravity agentapi.
      */
-    static messagesToAgentApiPrompt(messages, system) {
+    static messagesToAgentApiPrompt(messages, system, tools) {
         let fullPrompt = '';
         if (system) {
             fullPrompt += `System Instructions:\n${system}\n\n`;
+        }
+        if (tools && tools.length > 0) {
+            fullPrompt += `Available Tools:\n${JSON.stringify(tools, null, 2)}\n\n`;
         }
         for (const m of messages) {
             const role = m.role.toUpperCase();
@@ -307,7 +310,15 @@ class ProtocolConverter {
                 text = m.content;
             }
             else if (Array.isArray(m.content)) {
-                text = m.content.map((c) => c.text || c.thinking || JSON.stringify(c)).join('\n');
+                text = m.content.map((c) => {
+                    if (c.type === 'text')
+                        return c.text || '';
+                    if (c.type === 'tool_use')
+                        return `[Tool Call: ${c.name} (${JSON.stringify(c.input || {})})]`;
+                    if (c.type === 'tool_result')
+                        return `[Tool Result (${c.tool_use_id || ''}): ${typeof c.content === 'string' ? c.content : JSON.stringify(c.content || {})}]`;
+                    return c.text || c.thinking || JSON.stringify(c);
+                }).join('\n');
             }
             fullPrompt += `[${role}]\n${text}\n\n`;
         }

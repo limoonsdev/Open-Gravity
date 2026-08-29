@@ -94,6 +94,30 @@ export class SSEStreamHelper {
     });
   }
 
+  public sendAnthropicToolUseBlockStart(index: number = 0, id: string, name: string) {
+    this.sendAnthropicEvent('content_block_start', {
+      type: 'content_block_start',
+      index,
+      content_block: {
+        type: 'tool_use',
+        id,
+        name,
+        input: {}
+      }
+    });
+  }
+
+  public sendAnthropicThinkingBlockStart(index: number = 0) {
+    this.sendAnthropicEvent('content_block_start', {
+      type: 'content_block_start',
+      index,
+      content_block: {
+        type: 'thinking',
+        thinking: ''
+      }
+    });
+  }
+
   public sendAnthropicTextDelta(index: number = 0, text: string) {
     this.sendAnthropicEvent('content_block_delta', {
       type: 'content_block_delta',
@@ -101,6 +125,28 @@ export class SSEStreamHelper {
       delta: {
         type: 'text_delta',
         text
+      }
+    });
+  }
+
+  public sendAnthropicThinkingDelta(index: number = 0, thinking: string) {
+    this.sendAnthropicEvent('content_block_delta', {
+      type: 'content_block_delta',
+      index,
+      delta: {
+        type: 'thinking_delta',
+        thinking
+      }
+    });
+  }
+
+  public sendAnthropicInputJsonDelta(index: number = 0, partial_json: string) {
+    this.sendAnthropicEvent('content_block_delta', {
+      type: 'content_block_delta',
+      index,
+      delta: {
+        type: 'input_json_delta',
+        partial_json
       }
     });
   }

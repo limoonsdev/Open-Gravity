@@ -1,12 +1,12 @@
-import { configManager } from '../utils/config';
-import { AntigravityDiscovery } from './discovery';
-import { antigravityCore } from './antigravity-core';
-import { geminiDirectEngine, GeminiGenerateRequest } from './gemini-direct';
-import { ProtocolConverter } from './converter';
 import { SSEStreamHelper } from '../utils/stream';
+import { ProtocolConverter } from './converter';
+import { geminiDirectEngine } from './gemini-direct';
+import { antigravityCore } from './antigravity-core';
+import { AntigravityDiscovery } from './discovery';
+import { configManager } from '../utils/config';
 import { logger } from '../utils/logger';
 
-export interface ExecutionStats {
+export interface RouterStats {
   totalRequests: number;
   activeRequests: number;
   totalPromptTokens: number;
@@ -17,7 +17,7 @@ export interface ExecutionStats {
 
 export class RequestRouter {
   private static instance: RequestRouter | null = null;
-  private stats: ExecutionStats = {
+  private stats: RouterStats = {
     totalRequests: 0,
     activeRequests: 0,
     totalPromptTokens: 0,
@@ -26,6 +26,8 @@ export class RequestRouter {
     antigravityConnected: false,
   };
 
+  private constructor() {}
+
   public static getInstance(): RequestRouter {
     if (!this.instance) {
       this.instance = new RequestRouter();
@@ -33,14 +35,14 @@ export class RequestRouter {
     return this.instance;
   }
 
-  public getStats(): ExecutionStats {
+  public getStats(): RouterStats {
     return { ...this.stats };
   }
 
   /**
    * Routes a chat completion request in OpenAI format.
    */
-  public async handleOpenAIChat(
+  public async handleOpenAiCompletion(
     body: any,
     streamHelper?: SSEStreamHelper
   ): Promise<any> {
@@ -50,13 +52,12 @@ export class RequestRouter {
 
     const config = configManager.get();
     const resolvedModel = configManager.resolveModel(body.model);
-    const requestId = `chatcmpl-${Math.random().toString(36).substring(2, 11)}`;
+    const requestId = `chatcmpl-${Math.random().toString(36).substring(2, 15)}`;
 
     try {
       const antigravityInstance = await AntigravityDiscovery.discover();
       this.stats.antigravityConnected = !!antigravityInstance;
 
-      // Prefer direct Gemini if API key is provided and streaming is requested, or if Antigravity is not detected
       const hasApiKey = !!config.geminiApiKey;
       const isStreaming = !!body.stream;
 
@@ -197,25 +198,53 @@ export class RequestRouter {
 
         if (isStreaming && streamHelper) {
           streamHelper.sendAnthropicMessageStart(requestId, resolvedModel, 20);
-          streamHelper.sendAnthropicContentBlockStart(0, '');
 
           let outputTokens = 0;
+          let blockIndex = 0;
+          let hasOpenTextBlock = false;
+          let hasToolCall = false;
+
           await geminiDirectEngine.streamGenerateContent({
             apiKey: config.geminiApiKey!,
             model: resolvedModel,
             body: geminiReq,
             onChunk: (data) => {
               const candidate = data?.candidates?.[0];
-              const text = candidate?.content?.parts?.map((p: any) => p.text || '').join('') || '';
-              if (text) {
-                outputTokens += Math.ceil(text.length / 4);
-                streamHelper.sendAnthropicTextDelta(0, text);
+              const parts = candidate?.content?.parts || [];
+
+              for (const p of parts) {
+                if (p.text) {
+                  if (!hasOpenTextBlock) {
+                    streamHelper.sendAnthropicContentBlockStart(blockIndex, '');
+                    hasOpenTextBlock = true;
+                  }
+                  outputTokens += Math.ceil(p.text.length / 4);
+                  streamHelper.sendAnthropicTextDelta(blockIndex, p.text);
+                }
+
+                if (p.functionCall) {
+                  if (hasOpenTextBlock) {
+                    streamHelper.sendAnthropicContentBlockStop(blockIndex);
+                    hasOpenTextBlock = false;
+                    blockIndex++;
+                  }
+                  hasToolCall = true;
+                  const toolId = `toolu_${Math.random().toString(36).substring(2, 9)}`;
+                  streamHelper.sendAnthropicToolUseBlockStart(blockIndex, toolId, p.functionCall.name);
+                  streamHelper.sendAnthropicInputJsonDelta(blockIndex, JSON.stringify(p.functionCall.args || {}));
+                  streamHelper.sendAnthropicContentBlockStop(blockIndex);
+                  blockIndex++;
+                }
               }
             },
           });
 
-          streamHelper.sendAnthropicContentBlockStop(0);
-          streamHelper.sendAnthropicMessageDelta('end_turn', outputTokens);
+          if (hasOpenTextBlock) {
+            streamHelper.sendAnthropicContentBlockStop(blockIndex);
+          }
+
+          const stopReason = hasToolCall ? 'tool_use' : 'end_turn';
+          streamHelper.sendAnthropicMessageDelta(stopReason, outputTokens);
           streamHelper.sendAnthropicMessageStop();
           return;
         } else {
@@ -234,7 +263,9 @@ export class RequestRouter {
       // Live Antigravity Language Server Engine
       if (antigravityInstance) {
         logger.debug(`Routing Anthropic request to Antigravity Live engine (${resolvedModel})`);
-        const prompt = ProtocolConverter.messagesToAgentApiPrompt(body.messages, typeof body.system === 'string' ? body.system : undefined);
+        
+        let systemPrompt = typeof body.system === 'string' ? body.system : (Array.isArray(body.system) ? body.system.map((s: any) => s.text || '').join('\n') : undefined);
+        const prompt = ProtocolConverter.messagesToAgentApiPrompt(body.messages, systemPrompt, body.tools);
         const tier = this.modelToTier(resolvedModel);
 
         if (isStreaming && streamHelper) {
@@ -242,11 +273,14 @@ export class RequestRouter {
           streamHelper.sendAnthropicContentBlockStart(0, '');
 
           let outputTokens = 0;
+          let fullOutput = '';
+
           await antigravityCore.generateViaAgentApi({
             prompt,
             modelTier: tier,
             onDelta: (chunk) => {
               outputTokens += Math.ceil(chunk.length / 4);
+              fullOutput += chunk;
               streamHelper.sendAnthropicTextDelta(0, chunk);
             },
           });

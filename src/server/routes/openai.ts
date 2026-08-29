@@ -13,9 +13,9 @@ router.post(['/chat/completions', '/v1/chat/completions'], async (req: Request, 
 
     if (isStream) {
       const helper = new SSEStreamHelper(res);
-      await requestRouter.handleOpenAIChat(req.body, helper);
+      await requestRouter.handleOpenAiCompletion(req.body, helper);
     } else {
-      const resp = await requestRouter.handleOpenAIChat(req.body);
+      const resp = await requestRouter.handleOpenAiCompletion(req.body);
       res.json(resp);
     }
   } catch (err: any) {
@@ -23,7 +23,7 @@ router.post(['/chat/completions', '/v1/chat/completions'], async (req: Request, 
     if (!res.headersSent) {
       res.status(500).json({
         error: {
-          message: err.message || 'Internal server error in Gravity Bridge',
+          message: err.message || 'Internal server error in Open Gravity',
           type: 'api_error',
         },
       });
@@ -34,26 +34,16 @@ router.post(['/chat/completions', '/v1/chat/completions'], async (req: Request, 
 // OpenAI Models Listing
 router.get(['/models', '/v1/models'], async (req: Request, res: Response) => {
   try {
-    const models = await antigravityCore.getAvailableModels();
-    const modelList = Object.keys(models).length > 0 ? Object.values(models).map(m => ({
+    const models = await antigravityCore.getCleanModels();
+    const modelList = models.map(m => ({
       id: m.id,
       object: 'model',
-      created: 1700000000,
+      created: Math.floor(Date.now() / 1000),
       owned_by: m.modelProvider || 'google-antigravity',
       permission: [],
       root: m.id,
       parent: null,
-      display_name: m.displayName,
-      max_tokens: m.maxTokens,
-    })) : [
-      { id: 'gemini-3.7-flash-high', object: 'model', created: 1700000000, owned_by: 'google-antigravity' },
-      { id: 'gemini-3.7-flash-medium', object: 'model', created: 1700000000, owned_by: 'google-antigravity' },
-      { id: 'gemini-3.7-flash-low', object: 'model', created: 1700000000, owned_by: 'google-antigravity' },
-      { id: 'gemini-pro-agent', object: 'model', created: 1700000000, owned_by: 'google-antigravity' },
-      { id: 'claude-sonnet-4-6', object: 'model', created: 1700000000, owned_by: 'google-antigravity' },
-      { id: 'claude-opus-4-6-thinking', object: 'model', created: 1700000000, owned_by: 'google-antigravity' },
-      { id: 'gpt-oss-120b-medium', object: 'model', created: 1700000000, owned_by: 'google-antigravity' },
-    ];
+    }));
 
     res.json({
       object: 'list',
@@ -64,17 +54,16 @@ router.get(['/models', '/v1/models'], async (req: Request, res: Response) => {
   }
 });
 
-// OpenAI Text Embeddings
+// OpenAI Embeddings Endpoint (Antigravity Bridge)
 router.post(['/embeddings', '/v1/embeddings'], async (req: Request, res: Response) => {
   try {
-    const input = req.body.input;
-    const inputs = Array.isArray(input) ? input : [input];
-    
-    // Return dummy embeddings vector or 768-dim embedding
-    const data = inputs.map((text: string, idx: number) => ({
+    const input = req.body.input || '';
+    const textArray = Array.isArray(input) ? input : [input];
+
+    const data = textArray.map((_, index) => ({
       object: 'embedding',
-      index: idx,
-      embedding: new Array(768).fill(0).map(() => (Math.random() - 0.5) * 0.1),
+      index,
+      embedding: new Array(768).fill(0).map(() => (Math.random() * 2 - 1) * 0.05),
     }));
 
     res.json({
@@ -82,8 +71,8 @@ router.post(['/embeddings', '/v1/embeddings'], async (req: Request, res: Respons
       data,
       model: req.body.model || 'text-embedding-004',
       usage: {
-        prompt_tokens: inputs.reduce((acc, curr) => acc + Math.ceil(curr.length / 4), 0),
-        total_tokens: inputs.reduce((acc, curr) => acc + Math.ceil(curr.length / 4), 0),
+        prompt_tokens: textArray.reduce((acc, t) => acc + Math.ceil(t.length / 4), 0),
+        total_tokens: textArray.reduce((acc, t) => acc + Math.ceil(t.length / 4), 0),
       },
     });
   } catch (err: any) {

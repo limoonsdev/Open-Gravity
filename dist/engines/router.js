@@ -1,11 +1,11 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.requestRouter = exports.RequestRouter = void 0;
-const config_1 = require("../utils/config");
-const discovery_1 = require("./discovery");
-const antigravity_core_1 = require("./antigravity-core");
-const gemini_direct_1 = require("./gemini-direct");
 const converter_1 = require("./converter");
+const gemini_direct_1 = require("./gemini-direct");
+const antigravity_core_1 = require("./antigravity-core");
+const discovery_1 = require("./discovery");
+const config_1 = require("../utils/config");
 const logger_1 = require("../utils/logger");
 class RequestRouter {
     static instance = null;
@@ -17,6 +17,7 @@ class RequestRouter {
         lastLatencyMs: 0,
         antigravityConnected: false,
     };
+    constructor() { }
     static getInstance() {
         if (!this.instance) {
             this.instance = new RequestRouter();
@@ -29,17 +30,16 @@ class RequestRouter {
     /**
      * Routes a chat completion request in OpenAI format.
      */
-    async handleOpenAIChat(body, streamHelper) {
+    async handleOpenAiCompletion(body, streamHelper) {
         const startTime = Date.now();
         this.stats.totalRequests++;
         this.stats.activeRequests++;
         const config = config_1.configManager.get();
         const resolvedModel = config_1.configManager.resolveModel(body.model);
-        const requestId = `chatcmpl-${Math.random().toString(36).substring(2, 11)}`;
+        const requestId = `chatcmpl-${Math.random().toString(36).substring(2, 15)}`;
         try {
             const antigravityInstance = await discovery_1.AntigravityDiscovery.discover();
             this.stats.antigravityConnected = !!antigravityInstance;
-            // Prefer direct Gemini if API key is provided and streaming is requested, or if Antigravity is not detected
             const hasApiKey = !!config.geminiApiKey;
             const isStreaming = !!body.stream;
             if (hasApiKey) {
@@ -163,23 +163,47 @@ class RequestRouter {
                 const geminiReq = converter_1.ProtocolConverter.anthropicToGemini(body);
                 if (isStreaming && streamHelper) {
                     streamHelper.sendAnthropicMessageStart(requestId, resolvedModel, 20);
-                    streamHelper.sendAnthropicContentBlockStart(0, '');
                     let outputTokens = 0;
+                    let blockIndex = 0;
+                    let hasOpenTextBlock = false;
+                    let hasToolCall = false;
                     await gemini_direct_1.geminiDirectEngine.streamGenerateContent({
                         apiKey: config.geminiApiKey,
                         model: resolvedModel,
                         body: geminiReq,
                         onChunk: (data) => {
                             const candidate = data?.candidates?.[0];
-                            const text = candidate?.content?.parts?.map((p) => p.text || '').join('') || '';
-                            if (text) {
-                                outputTokens += Math.ceil(text.length / 4);
-                                streamHelper.sendAnthropicTextDelta(0, text);
+                            const parts = candidate?.content?.parts || [];
+                            for (const p of parts) {
+                                if (p.text) {
+                                    if (!hasOpenTextBlock) {
+                                        streamHelper.sendAnthropicContentBlockStart(blockIndex, '');
+                                        hasOpenTextBlock = true;
+                                    }
+                                    outputTokens += Math.ceil(p.text.length / 4);
+                                    streamHelper.sendAnthropicTextDelta(blockIndex, p.text);
+                                }
+                                if (p.functionCall) {
+                                    if (hasOpenTextBlock) {
+                                        streamHelper.sendAnthropicContentBlockStop(blockIndex);
+                                        hasOpenTextBlock = false;
+                                        blockIndex++;
+                                    }
+                                    hasToolCall = true;
+                                    const toolId = `toolu_${Math.random().toString(36).substring(2, 9)}`;
+                                    streamHelper.sendAnthropicToolUseBlockStart(blockIndex, toolId, p.functionCall.name);
+                                    streamHelper.sendAnthropicInputJsonDelta(blockIndex, JSON.stringify(p.functionCall.args || {}));
+                                    streamHelper.sendAnthropicContentBlockStop(blockIndex);
+                                    blockIndex++;
+                                }
                             }
                         },
                     });
-                    streamHelper.sendAnthropicContentBlockStop(0);
-                    streamHelper.sendAnthropicMessageDelta('end_turn', outputTokens);
+                    if (hasOpenTextBlock) {
+                        streamHelper.sendAnthropicContentBlockStop(blockIndex);
+                    }
+                    const stopReason = hasToolCall ? 'tool_use' : 'end_turn';
+                    streamHelper.sendAnthropicMessageDelta(stopReason, outputTokens);
                     streamHelper.sendAnthropicMessageStop();
                     return;
                 }
@@ -197,17 +221,20 @@ class RequestRouter {
             // Live Antigravity Language Server Engine
             if (antigravityInstance) {
                 logger_1.logger.debug(`Routing Anthropic request to Antigravity Live engine (${resolvedModel})`);
-                const prompt = converter_1.ProtocolConverter.messagesToAgentApiPrompt(body.messages, typeof body.system === 'string' ? body.system : undefined);
+                let systemPrompt = typeof body.system === 'string' ? body.system : (Array.isArray(body.system) ? body.system.map((s) => s.text || '').join('\n') : undefined);
+                const prompt = converter_1.ProtocolConverter.messagesToAgentApiPrompt(body.messages, systemPrompt, body.tools);
                 const tier = this.modelToTier(resolvedModel);
                 if (isStreaming && streamHelper) {
                     streamHelper.sendAnthropicMessageStart(requestId, resolvedModel, Math.ceil(prompt.length / 4));
                     streamHelper.sendAnthropicContentBlockStart(0, '');
                     let outputTokens = 0;
+                    let fullOutput = '';
                     await antigravity_core_1.antigravityCore.generateViaAgentApi({
                         prompt,
                         modelTier: tier,
                         onDelta: (chunk) => {
                             outputTokens += Math.ceil(chunk.length / 4);
+                            fullOutput += chunk;
                             streamHelper.sendAnthropicTextDelta(0, chunk);
                         },
                     });
