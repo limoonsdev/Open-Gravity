@@ -1,5 +1,4 @@
 import http from 'http';
-import open from 'open';
 import chalk from 'chalk';
 import net from 'net';
 import readline from 'readline';
@@ -7,7 +6,7 @@ import { createBridgeApp } from '../../server/app';
 import { configManager } from '../../utils/config';
 import { AntigravityDiscovery } from '../../engines/discovery';
 import { antigravityCore } from '../../engines/antigravity-core';
-import { printBanner } from '../banner';
+import { InteractiveTui } from '../tui';
 import { logger } from '../../utils/logger';
 
 async function isPortAvailable(port: number, host: string): Promise<boolean> {
@@ -35,7 +34,6 @@ async function findAvailablePort(startPort: number, host: string): Promise<numbe
 export async function startCommand(options: {
   port?: number;
   host?: string;
-  open?: boolean;
   model?: string;
 }) {
   const config = configManager.get();
@@ -46,23 +44,17 @@ export async function startCommand(options: {
     configManager.update({ defaultModel: options.model });
   }
 
-  logger.info('Starting Open Gravity...');
-
   // Auto-discover Antigravity
   const instance = await AntigravityDiscovery.discover(true);
   let accountDetails = null;
 
   if (instance) {
-    logger.success(`Antigravity Language Server detected (PID: ${instance.pid}, Port: ${instance.port})`);
     accountDetails = await antigravityCore.getUserAccountDetails();
-  } else {
-    logger.warn('Antigravity Language Server not detected. Make sure Antigravity is running to use your Pro subscription.');
   }
 
   // Check port availability and auto-fallback if needed
   const availablePort = await findAvailablePort(targetPort, host);
   if (availablePort !== targetPort) {
-    logger.info(`Port ${targetPort} is occupied, automatically bound to available port ${availablePort}`);
     targetPort = availablePort;
     configManager.update({ port: availablePort });
   }
@@ -71,22 +63,13 @@ export async function startCommand(options: {
   const server = http.createServer(app);
 
   server.listen(targetPort, host, () => {
-    printBanner({
+    const tui = new InteractiveTui({
       port: targetPort,
       host,
-      antigravityConnected: !!instance,
-      activePort: instance?.port,
-      pid: instance?.pid,
       defaultModel: configManager.get().defaultModel,
-      account: accountDetails,
     });
 
-    console.log(chalk.bold.green(`  🚀 Ready to receive agent requests!`));
-    console.log(chalk.gray(`  (Press Ctrl+C to stop the server)\n`));
-
-    if (options.open || config.openBrowserOnStart) {
-      open(`http://${host}:${targetPort}/dashboard`).catch(() => {});
-    }
+    tui.start(accountDetails, instance?.pid, instance?.port);
   });
 
   server.on('error', (err: any) => {
