@@ -36,6 +36,7 @@ jobs:
           if-no-files-found: error
 
   executables:
+    name: executables (${{ matrix.targets }})
     needs: test
     strategy:
       fail-fast: false
@@ -73,6 +74,7 @@ jobs:
           if-no-files-found: error
 
   desktop:
+    name: desktop (${{ matrix.target }})
     needs: test
     strategy:
       fail-fast: false
@@ -80,15 +82,12 @@ jobs:
         include:
           - os: windows-latest
             target: win-x64
-            app: release/OpenGravity-win-x64.exe
             smoke: node scripts/smoke-desktop.mjs release/OpenGravity-win-x64.exe
           - os: ubuntu-22.04
             target: linux-x64
-            app: release/OpenGravity-linux-x64
             smoke: xvfb-run -a node scripts/smoke-desktop.mjs release/OpenGravity-linux-x64
           - os: macos-latest
             target: macos-arm64
-            app: release/OpenGravity-macos-arm64
             smoke: ''
     runs-on: ${{ matrix.os }}
     steps:
