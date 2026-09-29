@@ -24,6 +24,8 @@
     "exe": "node scripts/build-exe.mjs",
     "exe:win": "node scripts/build-exe.mjs --target win-x64",
     "exe:all": "node scripts/build-exe.mjs --target win-x64,linux-x64,macos-arm64,macos-x64",
+    "desktop": "node scripts/build-desktop.mjs",
+    "desktop:bundle": "node scripts/build-desktop.mjs --bundle",
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test test/*.test.ts",
     "check": "npm run typecheck && npm test && npm run build",

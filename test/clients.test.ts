@@ -112,9 +112,9 @@ describe('Protocol auto-detection (POST /)', () => {
     assert.equal(bad.res.status, 400);
   });
   test('GET / is still the dashboard', async () => {
-    const res = await fetch(base + '/');
-    assert.equal(res.status, 200);
-    assert.match(res.headers.get('content-type') || '', /html/);
+    const res = await fetch(base + '/', { redirect: 'manual' });
+    assert.equal(res.status, 302);
+    assert.equal(res.headers.get('location'), '/ui/');
   });
 });
 

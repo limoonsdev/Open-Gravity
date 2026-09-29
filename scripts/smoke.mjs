@@ -34,8 +34,10 @@ try {
     health = await fetch(`${base}/health`).then((r) => r.json()).catch(() => undefined);
   }
   if (health?.service !== 'open-gravity') fail('health endpoint did not answer');
-  const html = await fetch(base).then((r) => r.text());
-  if (!html.includes('Open Gravity')) fail('dashboard not served');
+  const html = await fetch(`${base}/ui/`).then((r) => r.text());
+  if (!html.includes('Open Gravity') || !html.includes('/ui/_next/')) fail('dashboard not served');
+  const page = await fetch(`${base}/ui/analytics/`);
+  if (page.status !== 200) fail(`dashboard page returned ${page.status}`);
   const state = await fetch(`${base}/admin/api/state`).then((r) => r.json());
   if (!Array.isArray(state.catalog) || state.catalog.length < 20) fail('admin state incomplete');
   const api = await fetch(`${base}/v1/chat/completions`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ model: 'x', messages: [{ role: 'user', content: 'hi' }] }) });

@@ -24,9 +24,16 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - run: npm run build:ui
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
+      - name: Dashboard (Next.js export)
+        uses: actions/upload-artifact@v4
+        with:
+          name: dashboard
+          path: dashboard/out
+          if-no-files-found: error
 
   executables:
     needs: test
@@ -51,6 +58,10 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          name: dashboard
+          path: dashboard/out
       - name: Build single executable
         run: node scripts/build-exe.mjs --target ${{ matrix.targets }}
       - name: Smoke test
@@ -61,9 +72,65 @@ jobs:
           path: release/*
           if-no-files-found: error
 
+  desktop:
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: win-x64
+            app: release/OpenGravity-win-x64.exe
+            smoke: node scripts/smoke-desktop.mjs release/OpenGravity-win-x64.exe
+          - os: ubuntu-22.04
+            target: linux-x64
+            app: release/OpenGravity-linux-x64
+            smoke: xvfb-run -a node scripts/smoke-desktop.mjs release/OpenGravity-linux-x64
+          - os: macos-latest
+            target: macos-arm64
+            app: release/OpenGravity-macos-arm64
+            smoke: ''
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri -> target
+      - name: Linux WebView dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libssl-dev patchelf xvfb
+      - run: npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          name: dashboard
+          path: dashboard/out
+      - name: Build the desktop app (one file) and installers
+        run: node scripts/build-desktop.mjs --bundle --target ${{ matrix.target }}
+      - name: Smoke test
+        if: matrix.smoke != ''
+        run: ${{ matrix.smoke }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: open-gravity-desktop-${{ matrix.target }}
+          path: |
+            release/OpenGravity-*
+            release/*.msi
+            release/*setup*.exe
+            release/*.deb
+            release/*.AppImage
+            release/*.dmg
+          if-no-files-found: error
+
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: executables
+    needs: [executables, desktop]
     runs-on: ubuntu-latest
     permissions:
       contents: write

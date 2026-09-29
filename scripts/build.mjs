@@ -7,6 +7,7 @@ import { dirname, join, relative, extname, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { brotliCompressSync, constants as zc } from 'node:zlib';
+import { execSync } from 'node:child_process';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
@@ -50,7 +51,20 @@ export function collectUi() {
   return { assets, count: Object.keys(assets).length, raw, packed };
 }
 
+/** Build the Next.js dashboard when its export is missing (or when forced). */
+export function ensureUi(force = false) {
+  const out = join(root, 'dashboard', 'out', 'index.html');
+  if ((existsSync(out) && !force) || process.env.OG_SKIP_UI === '1') return;
+  if (!existsSync(join(root, 'node_modules', 'next', 'package.json'))) {
+    console.warn('Next.js is not installed (npm ci): cannot build the dashboard.');
+    return;
+  }
+  console.log('Building the dashboard (Next.js static export)...');
+  execSync('npm run build -w dashboard', { cwd: root, stdio: 'inherit', env: { ...process.env, NEXT_TELEMETRY_DISABLED: '1' } });
+}
+
 export async function bundle({ minify = false } = {}) {
+  ensureUi(process.argv.includes('--ui'));
   const ui = collectUi();
   if (!ui) console.warn('dashboard/out not found: run "npm run build:ui" first (the dashboard will be missing).');
   else console.log(`Dashboard: ${ui.count} files, ${(ui.raw / 1024).toFixed(0)} KB -> ${(ui.packed / 1024).toFixed(0)} KB embedded`);

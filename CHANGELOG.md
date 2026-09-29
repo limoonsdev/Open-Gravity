@@ -1,5 +1,25 @@
 # Changelog
 
+## 3.0.0
+
+### Added
+- **Desktop app in one file.** `OpenGravity.exe` (and Linux / macOS builds) is a Tauri 2 app that embeds the whole router: splash screen, native window with the dashboard (frameless with rounded corners and native shadow on Windows 11, overlay title bar on macOS), tray menu, close to tray, start with the computer (minimized), single instance, watchdog that restarts the router, external links opened in the browser. The router is extracted once per version and stops with the app; if a router is already running, the app attaches to it. NSIS, .deb, AppImage and .dmg installers are built too.
+- **New dashboard** written in Next.js, React and Tailwind CSS, embedded Brotli-compressed in the executable and served under `/ui/`: command palette (Ctrl+K), light / dark / system themes, provider and tool logos, live requests, accessible charts (keyboard, tooltips, table views), responsive down to phone width.
+- **Get started guide**: detects local engines (Ollama, LM Studio, llama.cpp, vLLM, Jan…), one-click free and popular providers, default route (free combo, fallback over all providers or one model), one-click tool setup, universal endpoints, test message.
+- **Free APIs hub**: official free tiers, free models, free credits, no-key public APIs and local engines with links to each provider's limits; OpenRouter `:free` models discovered live; a one-click `free` combo. New presets: Pollinations and LLM7 (no key), free models on Zhipu, Qianfan, Hunyuan and Spark (105 presets).
+- **Quotas and budgets**: rate-limit headers are tracked per key and exhausted keys are skipped before a call fails; budget rules per provider, key, model, router key, client app or global (requests, tokens or cost per minute to month; block or warn) with 80 % / 100 % alerts; account balances for OpenRouter, DeepSeek, Moonshot, SiliconFlow and one-api gateways.
+- **Analytics**: latency and TTFT percentiles, output speed, prompt-cache ratio, fallbacks, emulated tools, auto-fixes, cache hits; breakdowns by model, provider, key, client app, router key, endpoint and combo; weekday × hour heatmap; status codes and top errors; spending projection; CSV export.
+- **Token saver and compaction**: trims old tool outputs, duplicates, JSON, whitespace, old images and reasoning, and compacts long conversations near the context window (built-in digest or cached model summary), in prompt-cache-friendly steps. Presets, custom options, simulator and monthly savings calculator; savings recorded per request.
+- **Universal client compatibility**: client apps recognised from headers (30+ tools); Azure OpenAI deployment paths, LM Studio `/api/v0`, Gemini `/v1beta/openai`, DeepSeek `/beta`, `POST /` with protocol detection; embeddings, images, audio, moderations and rerank forwarded (multipart safe).
+- **FIM autocomplete**: `/v1/completions` with `suffix`, `/v1/fim/completions`, `/beta/completions`, `/infill` and Ollama `suffix`; native on Codestral, DeepSeek, Ollama, llama.cpp and completions engines, emulated on every chat model with fence and echo cleanup.
+- **41 integrations** (was 14) with installation detection, categories and ready-to-paste setups: Continue, Zed, Crush, Goose, OpenHands, JetBrains AI, Xcode, Android Studio, Neovim, Emacs, LobeChat, LibreChat, n8n, LangChain, LlamaIndex, Vercel AI SDK and more.
+- New logo and icons; `x-og-router` response header; `/admin/api/local/detect`.
+
+### Changed
+- The dashboard moved from a single HTML file to `dashboard/` (Next.js); `/` and `/dashboard` redirect to `/ui/`.
+- `npm run build` builds the dashboard first when it is missing; `npm run desktop` builds the desktop app.
+- Settings gain *Token saver*, budgets (`limits`) and an `onboarded` flag; existing configurations are upgraded automatically.
+
 ## 2.1.0
 
 ### Added

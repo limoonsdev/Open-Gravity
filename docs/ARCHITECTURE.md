@@ -1,16 +1,26 @@
 # Architecture
 
 ```
- Claude Code · Codex · Gemini CLI · OpenCode · Cursor · Cline · Copilot · Open WebUI · SDKs
-        │ Anthropic     │ Responses    │ Gemini     │ OpenAI Chat    │ Ollama / Completions
+ ┌──────────────── OpenGravity.exe (desktop/, Tauri 2, Rust) ────────────────┐
+ │ splash · native window (dashboard) · tray · autostart · watchdog         │
+ │ embedded core (gzip) ─► extracted once ─► `open-gravity start --desktop` │
+ └──────────────────────────────────┬────────────────────────────────────────┘
+                                    ▼
+ Claude Code · Codex · Gemini CLI · Cursor · Cline · Continue · Copilot · Open WebUI · SDKs
+        │ Anthropic     │ Responses    │ Gemini     │ OpenAI Chat    │ Ollama / Completions / FIM
         ▼               ▼              ▼            ▼                ▼
  ┌──────────────────────────────────────────────────────────────────────────┐
- │ server/        HTTP server · auth (API keys, CSRF, DNS rebinding)        │
- │                /v1/* inference endpoints · /admin/api/* · web panel      │
+ │ server/        HTTP server · auth (API keys, CSRF, DNS rebinding, CSP)   │
+ │                path normalisation (Azure, /api/v0, POST / sniffing)      │
+ │                /v1/* inference · raw proxy (images, audio, rerank…)      │
+ │                /admin/api/* · /ui/* Next.js dashboard (embedded, Brotli) │
  ├──────────────────────────────────────────────────────────────────────────┤
  │ translate/     client request ──parse──► IRRequest                       │
  │ router/        resolve model ─► candidates (alias → combo → provider/…)  │
- │                for each candidate × key (rotation, cooldowns):           │
+ │                budgets (quota.ts) ─► 429 before any upstream call        │
+ │                token saver: trim ─► compact near the context window      │
+ │                for each candidate × key (rotation, cooldowns, keys       │
+ │                exhausted per rate-limit headers skipped):                │
  │                  same protocol? ─► passthrough body                      │
  │                  otherwise      ─► learned fixes · output clamp (modeldb) │
  │                                    · tool emulation ─► build from IR     │
@@ -21,10 +31,12 @@
  │                (commit to the client only after the first token, so an   │
  │                 early upstream error can still fall back)                │
  ├──────────────────────────────────────────────────────────────────────────┤
- │ providers/     catalog (103 presets) · upstream HTTP (undici, proxy)     │
+ │ providers/     catalog (105 presets) · upstream HTTP (undici, proxy)     │
+ │                free API hub · balances · local engine detection ·        │
  │                Antigravity desktop bridge                                │
- │ core/          config store (hot reload) · usage log & analytics ·       │
- │                model database (3,500+ models) · pricing · logger         │
+ │ core/          config store (hot reload) · usage log · analytics ·       │
+ │                client detection · model database (3,500+ models) ·      │
+ │                pricing · logger                                          │
  └──────────────────────────────────────────────────────────────────────────┘
         │                  │                 │                 │
         ▼                  ▼                 ▼                 ▼
@@ -84,10 +96,36 @@ Emulation is used when the provider's tool mode is `emulate`, when the model dat
 - output is buffered until the first content event (or 20 s), so errors at the start of a stream still fall back; afterwards SSE keep-alive pings protect long reasoning phases;
 - client disconnects abort the upstream request.
 
+## Autocomplete (FIM)
+
+`translate/fim.ts` parses fill-in-the-middle requests from every client style (`/v1/completions` with `suffix`, Mistral `/v1/fim/completions`, DeepSeek `/beta/completions`, llama.cpp `/infill`, Ollama `/api/generate` with `suffix`) into `IRFim`. `nativeFimRoute` picks the provider's own FIM endpoint when it has one (Codestral, DeepSeek, Ollama, llama.cpp, `completions` engines) and a matching decoder; any other model gets an emulated FIM prompt on the chat API, and `FimCleaner` strips code fences and echoed prefix lines from the stream. A 404 on the native route is learned (`noNativeFim`) and the model falls back to emulation.
+
+## Quotas and budgets
+
+`router/quota.ts` keeps, per provider key (and model), the last rate-limit headers (`x-ratelimit-*` in OpenAI, Groq, Cerebras and generic forms, `anthropic-ratelimit-*`, `retry-after`); a key whose remaining requests or tokens reached 0 is skipped until its reset time, before a call fails. `LimitRule`s (scope global / provider / key / model / router key / client app, period minute → month on the local calendar, max requests / tokens / cost, block or warn) are evaluated against the usage log; blocking rules answer 429 with `Retry-After` before any upstream call, and 80 % / 100 % crossings raise alerts (dashboard + log). `providers/balance.ts` reads account balances where the provider exposes them (OpenRouter, DeepSeek, Moonshot, SiliconFlow, one-api), cached for 5 minutes.
+
+## Token saver
+
+`router/tokensaver.ts` works on the IR before it is sent. Stage 1 trims what agents resend on every turn: old tool outputs above a size (head and tail kept), duplicate outputs, JSON minification, whitespace, old images and reasoning. Stage 2 compacts: when the request reaches `compactAt` × the context window (model database, or learned from an overflow error), older turns are replaced by a digest (tool calls, files, requests) or a summary produced by a configured model through an internal loopback call (`router/internal.ts`), cached by content hash. The protected tail and the compaction cut move in steps of 8 messages so provider prompt caches keep hitting between steps; orphaned tool results are repaired. Savings (tokens, cost at the model's input price, actions) are recorded per request.
+
+## Analytics
+
+`core/analytics.ts` aggregates the usage log for a range: totals with latency / TTFT percentiles, output speed, prompt-cache ratio, fallbacks, emulated tools, auto-fixes and cache hits; time series; breakdowns by model, provider, key, client app (`core/clients.ts` recognises 30+ tools from headers and user agents), router key, endpoint and combo; status codes, top errors, a weekday × hour heatmap, savings, a month projection and a formula-safe CSV export.
+
+## Dashboard
+
+`dashboard/` is a Next.js (App Router) static export under `basePath: /ui`, React 19, Tailwind CSS v4 and lucide icons, with self-hosted fonts and provider logos (LobeHub icons, MIT). `scripts/build.mjs` collects `dashboard/out`, Brotli-compresses text assets and embeds them in the bundle; `server/assets.ts` serves them with ETags, immutable caching for hashed files and decompression for clients without Brotli. The dashboard talks only to `/admin/api/*` (JSON + an SSE stream of logs and finished requests). In development, `npm run dev:ui` proxies the API to a running router.
+
+## Desktop app
+
+`desktop/src-tauri` is a Tauri 2 app. `build.rs` embeds the gzip-compressed command-line executable (`OG_CORE_PAYLOAD`) and derives a content id; on start the app shows a splash screen, extracts the core once per id into its data folder, and either attaches to a router already answering `/health` on the configured port or starts `open-gravity start --desktop --no-open --parent-pid <pid>` (no console window on Windows) and waits for its `OG_READY <url>` line. The main window then loads `<url>/ui/`; only local URLs may load in it, other links open in the browser. A watchdog restarts the core if it dies (at most 5 times in 10 minutes), the tray menu shows the router address and opens the dashboard (in the app or the browser), restarts the router or quits, and the core watches the parent pid so it never outlives the app. On Windows the window is frameless with the native shadow (Windows 11 rounds the corners) and the dashboard draws its own window controls; on macOS the title bar is an overlay.
+
 ## Security
 
 `server/security.ts`: Host header check against DNS rebinding when bound to loopback; API keys required for remote or cross-origin (browser) callers; admin API requires the `x-og-admin` header (not settable cross-origin without a preflight that is never granted) and same-origin; optional dashboard password (scrypt) with HMAC-signed session cookies.
 
 ## Packaging
 
-`scripts/build.mjs` bundles everything (the web panel is inlined through esbuild `define`, the model database is bundled as JSON) into `build/open-gravity.cjs`. `scripts/build-exe.mjs` turns it into a Node.js SEA for each target: it downloads and verifies the official Node binary of the same version when cross-compiling, strips the Authenticode signature on Windows, brands the exe with `rcedit` on Windows hosts, injects the blob with `postject` and signs ad hoc on macOS. The executable for the build host also embeds a V8 code cache (faster cold start); cross-compiled targets use a portable blob.
+`scripts/build.mjs` bundles everything (the dashboard export through esbuild `define`, built first if missing; the model database as JSON) into `build/open-gravity.cjs`. `scripts/build-exe.mjs` turns it into a Node.js SEA for each target: it downloads and verifies the official Node binary of the same version when cross-compiling, strips the Authenticode signature on Windows, brands the exe with `rcedit` on Windows hosts, injects the blob with `postject` and signs ad hoc on macOS. The executable for the build host also embeds a V8 code cache (faster cold start); cross-compiled targets use a portable blob.
+
+`scripts/build-desktop.mjs` builds the core for the target, compresses it, runs `tauri build` (optionally with installers) and copies the single-file app to `release/OpenGravity-<target>[.exe]`. Windows builds use the MSVC toolchain so WebView2's loader is linked statically and the app stays one file.
