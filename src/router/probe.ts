@@ -1,10 +1,9 @@
 // Lightweight connectivity test for a provider key + model (used by the dashboard).
-import { fetch } from 'undici';
 import type { ProviderConfig, Settings } from '../core/config';
 import type { IRRequest, IREvent } from '../translate';
 import { createDecoder, Aggregator } from '../translate';
 import { SSEParser } from '../translate/sse';
-import { buildTranslated, getDispatcher, extractErrorMessage } from '../providers/upstream';
+import { buildTranslated, upstreamFetch, extractErrorMessage } from '../providers/upstream';
 import { antigravityGenerate } from '../providers/antigravity';
 import { health } from './health';
 
@@ -37,10 +36,8 @@ export async function probeProvider(p: ProviderConfig, settings: Settings, opts:
       for await (const ev of antigravityGenerate(ir, model, signal)) agg.push(ev);
     } else {
       const up = buildTranslated(p, key, model, ir);
-      const res = await fetch(up.url, {
-        method: 'POST', headers: up.headers, body: JSON.stringify(up.body), signal,
-        dispatcher: getDispatcher(p.proxy || settings.upstreamProxy, 45_000, 45_000),
-      });
+      const res = await upstreamFetch(up.url, { method: 'POST', headers: up.headers, body: JSON.stringify(up.body), signal },
+        { proxy: p.proxy || settings.upstreamProxy, headersTimeout: 45_000, bodyTimeout: 45_000 });
       if (!res.ok) {
         const text = await res.text();
         const error = extractErrorMessage(text);

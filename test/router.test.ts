@@ -346,6 +346,14 @@ describe('Routing, fallback and health', () => {
     assert.equal(r.res.status, 200);
   });
 
+  test('health endpoint identifies the router (used for single-instance detection)', async () => {
+    const res = await fetch(`${base}/health`);
+    assert.equal(res.status, 200);
+    assert.equal(((await res.json()) as any).service, 'open-gravity');
+    const { probeExisting } = await import('../src/app');
+    assert.equal(await probeExisting('127.0.0.1', app.info.port), true);
+  });
+
   test('/v1/models lists combos and provider models', async () => {
     const res = await fetch(`${base}/v1/models`);
     const json: any = await res.json();

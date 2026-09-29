@@ -1,11 +1,10 @@
 // Public inference endpoints (OpenAI, Anthropic, Responses, Gemini dialects).
 import type { IncomingMessage, ServerResponse } from 'http';
-import { fetch } from 'undici';
 import type { ApiFormat } from '../translate';
 import { errorBody, parseClientRequest, estimateRequestTokens } from '../translate';
 import { handleInference, Deps } from '../router/executor';
 import { resolveModel, listRoutableModels, pickKeys } from '../router/resolve';
-import { getDispatcher, authHeaders, extractErrorMessage } from '../providers/upstream';
+import { upstreamFetch, authHeaders, extractErrorMessage } from '../providers/upstream';
 import { json, readJson, HttpError } from './http';
 import { VERSION } from '../core/util';
 
@@ -60,12 +59,11 @@ async function embeddings(r: ApiRequest, deps: Deps) {
   for (const cand of cands) {
     for (const key of pickKeys(cand.provider, cand.model).slice(0, 2)) {
       try {
-        const up = await fetch(`${cand.provider.baseUrl.replace(/\/+$/, '')}/embeddings`, {
+        const up = await upstreamFetch(`${cand.provider.baseUrl.replace(/\/+$/, '')}/embeddings`, {
           method: 'POST',
           headers: { 'content-type': 'application/json', ...(cand.provider.headers || {}), ...authHeaders(cand.provider, key) },
           body: JSON.stringify({ ...body, model: cand.model }),
-          dispatcher: getDispatcher(cand.provider.proxy || cfg.settings.upstreamProxy, 60_000, 60_000),
-        });
+        }, { proxy: cand.provider.proxy || cfg.settings.upstreamProxy, headersTimeout: 60_000, bodyTimeout: 60_000 });
         const text = await up.text();
         if (up.ok) {
           r.res.writeHead(200, { 'content-type': 'application/json', 'x-og-provider': cand.provider.id });
@@ -162,5 +160,5 @@ export async function routeApi(r: ApiRequest, deps: Deps): Promise<boolean> {
 
 export function isApiPath(path: string): boolean {
   const p = normalizeApiPath(path);
-  return /^\/(v1|v1beta|v1alpha)\//.test(p) || ['/chat/completions', '/messages', '/messages/count_tokens', '/responses', '/embeddings', '/models'].includes(p);
+  return /^\/(v1|v1beta|v1alpha)\//.test(p) || ['/chat/completions', '/messages', '/messages/count_tokens', '/responses', '/embeddings', '/models', '/health', '/healthz'].includes(p);
 }

@@ -1,7 +1,6 @@
 // Executes an inference request: resolve -> try candidates/keys in order with
 // fallback -> translate the upstream stream into the client's protocol.
 import type { IncomingMessage, ServerResponse } from 'http';
-import { fetch } from 'undici';
 import type { ConfigStore, ProviderConfig, ProviderKey } from '../core/config';
 import type { UsageStore, Attempt, CapturedBodies } from '../core/usage';
 import { logger, c } from '../core/logger';
@@ -16,7 +15,7 @@ import { usageFromOpenAI } from '../translate/openai';
 import { usageFromAnthropic, sanitizeAnthropicPassthrough } from '../translate/anthropic';
 import { usageFromGemini } from '../translate/gemini';
 import { usageFromResponses } from '../translate/responses';
-import { buildPassthrough, buildTranslated, getDispatcher, extractErrorMessage, UpstreamRequest } from '../providers/upstream';
+import { buildPassthrough, buildTranslated, upstreamFetch, extractErrorMessage, UpstreamRequest } from '../providers/upstream';
 import { antigravityGenerate } from '../providers/antigravity';
 import { resolveModel, pickKeys, Candidate } from './resolve';
 import { health } from './health';
@@ -291,8 +290,8 @@ async function runAttempt(
     if (passthrough && input.format === 'openai') clientWantsUsage = !!input.body?.stream_options?.include_usage;
     if (captured) captured.upstreamRequest = { url: up.url, body: up.body };
 
-    const dispatcher = getDispatcher(p.proxy || settings.upstreamProxy, p.timeoutMs || settings.headersTimeoutMs, settings.idleTimeoutMs);
-    const send = () => fetch(up.url, { method: 'POST', headers: up.headers, body: JSON.stringify(up.body), dispatcher, signal });
+    const dispatcher = { proxy: p.proxy || settings.upstreamProxy, headersTimeout: p.timeoutMs || settings.headersTimeoutMs, bodyTimeout: settings.idleTimeoutMs };
+    const send = () => upstreamFetch(up.url, { method: 'POST', headers: up.headers, body: JSON.stringify(up.body), signal }, dispatcher);
     let resp;
     try {
       resp = await send();

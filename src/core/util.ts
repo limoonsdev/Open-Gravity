@@ -4,7 +4,14 @@ import path from 'path';
 import fs from 'fs';
 
 declare const __OG_VERSION__: string;
-export const VERSION: string = typeof __OG_VERSION__ !== 'undefined' ? __OG_VERSION__ : '2.0.0-dev';
+function devVersion(): string {
+  try {
+    return `${JSON.parse(fs.readFileSync(path.join(__dirname, '..', '..', 'package.json'), 'utf8')).version}-dev`;
+  } catch {
+    return 'dev';
+  }
+}
+export const VERSION: string = typeof __OG_VERSION__ !== 'undefined' ? __OG_VERSION__ : devVersion();
 
 export function dataDir(): string {
   const dir = process.env.OPEN_GRAVITY_HOME || path.join(os.homedir(), '.open-gravity');

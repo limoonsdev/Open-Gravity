@@ -11,7 +11,7 @@ import { fetchProviderModels } from '../providers/upstream';
 import { antigravityStatus } from '../providers/antigravity';
 import { health } from '../router/health';
 import { probeProvider } from '../router/probe';
-import { listRoutableModels, effectiveDefault } from '../router/resolve';
+import { listRoutableModels, effectiveDefault, resolveModel } from '../router/resolve';
 import { handleInference, Deps } from '../router/executor';
 import { listTools, applyTool, restoreTool, ToolContext } from '../integrations/tools';
 import { json, readJson, HttpError, clientIp } from './http';
@@ -430,6 +430,17 @@ export async function routeAdmin(req: IncomingMessage, res: ServerResponse, url:
 
   // ---- misc
   if (path === '/antigravity' && method === 'GET') return json(res, 200, await antigravityStatus());
+
+  if (path === '/resolve' && method === 'GET') {
+    const r = resolveModel(cfg, url.searchParams.get('model') || '');
+    return json(res, 200, {
+      via: r.via, combo: r.combo, error: r.error,
+      candidates: r.candidates.map((c) => ({
+        target: c.target, provider: c.provider.id, model: c.model, combo: c.combo,
+        keys: c.provider.keys.length ? c.provider.keys.map((k) => ({ id: k.id, label: k.label, enabled: k.enabled, cooling: health.isCooling(c.provider.id, k.id, c.model) })) : [],
+      })),
+    });
+  }
 
   if (path === '/playground' && method === 'POST') {
     await handleInference({

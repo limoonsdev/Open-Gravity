@@ -128,6 +128,28 @@ async function getNodeBinary(target) {
   return bin;
 }
 
+/**
+ * Remove the Authenticode signature from a PE file (what `signtool remove /s`
+ * does): zero the security data directory and drop the certificate table.
+ * Injecting the SEA blob would invalidate the signature anyway, and a stale
+ * signature looks more suspicious to antivirus heuristics than none.
+ */
+function stripAuthenticode(buf) {
+  if (buf.readUInt16LE(0) !== 0x5a4d) return buf;
+  const pe = buf.readUInt32LE(0x3c);
+  if (buf.readUInt32LE(pe) !== 0x4550) return buf;
+  const opt = pe + 24;
+  const magic = buf.readUInt16LE(opt);
+  const dirs = opt + (magic === 0x20b ? 112 : 96);
+  const secEntry = dirs + 4 * 8;
+  const offset = buf.readUInt32LE(secEntry);
+  const size = buf.readUInt32LE(secEntry + 4);
+  if (!offset || !size) return buf;
+  buf.writeUInt32LE(0, secEntry);
+  buf.writeUInt32LE(0, secEntry + 4);
+  return offset + size >= buf.length - 8 ? buf.subarray(0, offset) : buf;
+}
+
 function pngToIco(png) {
   // ICO container holding a single PNG image (supported since Windows Vista).
   const header = Buffer.alloc(6 + 16);
@@ -148,42 +170,31 @@ function pngToIco(png) {
 }
 
 async function brandWindowsExe(file) {
-  // Replace the Node.js icon and version info with Open Gravity's. Optional:
-  // if anything goes wrong the exe still works with the stock Node icon.
+  // Replace the Node.js icon and version info with Open Gravity's using rcedit
+  // (Windows UpdateResource API). Only done on Windows hosts: pure-JS PE
+  // rewriters can corrupt node.exe's relocation table. Optional: without it the
+  // exe works the same, it just shows the stock Node icon.
+  if (process.platform !== 'win32') {
+    console.log('  (icon branding skipped: only available when building on Windows)');
+    return;
+  }
   try {
-    const ResEdit = await import('resedit');
-    const pngPath = path.join(root, 'assets', 'icon-256.png');
-    const data = fs.readFileSync(file);
-    const exe = ResEdit.NtExecutable.from(data, { ignoreCert: true });
-    const res = ResEdit.NtExecutableResource.from(exe);
-    if (fs.existsSync(pngPath)) {
-      const iconFile = ResEdit.Data.IconFile.from(pngToIco(fs.readFileSync(pngPath)));
-      const groups = ResEdit.Resource.IconGroupEntry.fromEntries(res.entries);
-      for (const g of groups) {
-        ResEdit.Resource.IconGroupEntry.replaceIconsForResource(res.entries, g.id, g.lang, iconFile.icons.map((i) => i.data));
-      }
-    }
-    const vis = ResEdit.Resource.VersionInfo.fromEntries(res.entries);
-    for (const vi of vis) {
-      const [maj, min, pat] = pkg.version.split('.').map((n) => parseInt(n, 10) || 0);
-      vi.setFileVersion(maj, min, pat, 0);
-      vi.setProductVersion(maj, min, pat, 0);
-      for (const lang of vi.getAllLanguagesForStringValues()) {
-        vi.setStringValues(lang, {
-          FileDescription: 'Open Gravity - Universal AI Router',
-          ProductName: 'Open Gravity',
-          CompanyName: 'Open Gravity',
-          OriginalFilename: 'open-gravity.exe',
-          InternalName: 'open-gravity',
-          LegalCopyright: 'MIT License',
-          FileVersion: pkg.version,
-          ProductVersion: pkg.version,
-        });
-      }
-      vi.outputToResourceEntries(res.entries);
-    }
-    res.outputResource(exe);
-    fs.writeFileSync(file, Buffer.from(exe.generate()));
+    const rcedit = require('rcedit');
+    const ico = path.join(root, 'build', 'icon.ico');
+    fs.writeFileSync(ico, pngToIco(fs.readFileSync(path.join(root, 'assets', 'icon-256.png'))));
+    await rcedit(file, {
+      icon: ico,
+      'file-version': pkg.version,
+      'product-version': pkg.version,
+      'version-string': {
+        FileDescription: 'Open Gravity - Universal AI Router',
+        ProductName: 'Open Gravity',
+        CompanyName: 'Open Gravity',
+        OriginalFilename: 'open-gravity.exe',
+        InternalName: 'open-gravity',
+        LegalCopyright: 'MIT License',
+      },
+    });
   } catch (e) {
     console.warn(`  (icon/version branding skipped: ${e.message})`);
   }
@@ -213,7 +224,8 @@ async function main() {
     const info = targetInfo(target);
     console.log(`- ${target}`);
     const out = path.join(outDir, info.exeName);
-    fs.writeFileSync(out, await getNodeBinary(target));
+    const nodeBin = await getNodeBinary(target);
+    fs.writeFileSync(out, info.plat === 'win' ? stripAuthenticode(Buffer.from(nodeBin)) : nodeBin);
     fs.chmodSync(out, 0o755);
 
     if (info.plat === 'macos' && process.platform === 'darwin') {

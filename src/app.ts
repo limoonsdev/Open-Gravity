@@ -88,7 +88,7 @@ export async function startApp(opts: { port?: number; host?: string; config?: Co
 export function openBrowser(url: string) {
   try {
     const child = process.platform === 'win32'
-      ? spawn('cmd.exe', ['/c', 'start', '""', url], { detached: true, stdio: 'ignore', windowsHide: true })
+      ? spawn('cmd.exe', ['/c', 'start', '', url], { detached: true, stdio: 'ignore', windowsHide: true })
       : process.platform === 'darwin'
         ? spawn('open', [url], { detached: true, stdio: 'ignore' })
         : spawn('xdg-open', [url], { detached: true, stdio: 'ignore' });

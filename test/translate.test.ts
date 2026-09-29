@@ -141,3 +141,15 @@ test('Codex TOML update keeps user settings and replaces our table', () => {
   const firstTable = out.indexOf('[');
   assert.ok(out.indexOf('approval_policy') < firstTable, 'top-level keys stay before tables');
 });
+
+test('OpenAI passthrough adapts max_tokens / sampling for OpenAI reasoning models', async () => {
+  const { buildPassthrough } = await import('../src/providers/upstream');
+  const p: any = { id: 'openai', type: 'openai', format: 'openai', auth: 'bearer', baseUrl: 'https://api.openai.com/v1', keys: [], models: [] };
+  const up = buildPassthrough(p, { id: 'k', key: 'sk', enabled: true }, 'o3', 'openai', { model: 'coding', max_tokens: 50, temperature: 0.3, messages: [] }, {}, true);
+  assert.equal(up.body.model, 'o3');
+  assert.equal(up.body.max_completion_tokens, 50);
+  assert.equal(up.body.max_tokens, undefined);
+  assert.equal(up.body.temperature, undefined);
+  assert.equal(up.headers.authorization, 'Bearer sk');
+  assert.equal(up.url, 'https://api.openai.com/v1/chat/completions');
+});

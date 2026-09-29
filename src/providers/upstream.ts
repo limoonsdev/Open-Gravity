@@ -17,16 +17,38 @@ export interface UpstreamRequest {
 }
 
 const dispatchers = new Map<string, Dispatcher>();
+// Some Windows compatibility layers (e.g. Wine) reject the TCP keep-alive
+// socket option undici sets before connecting ("connect UNKNOWN"). When that
+// happens once we switch to sockets without it (HTTP keep-alive is unaffected).
+let socketCompat = false;
+
 export function getDispatcher(proxy: string | undefined, headersTimeout: number, bodyTimeout: number): Dispatcher {
-  const key = `${proxy || ''}|${headersTimeout}|${bodyTimeout}`;
+  const key = `${proxy || ''}|${headersTimeout}|${bodyTimeout}|${socketCompat}`;
   let d = dispatchers.get(key);
   if (!d) {
+    const connect = socketCompat ? { keepAlive: false } : undefined;
     d = proxy
-      ? new ProxyAgent({ uri: proxy, headersTimeout, bodyTimeout })
-      : new Agent({ headersTimeout, bodyTimeout, keepAliveTimeout: 30_000, connections: 64 });
+      ? new ProxyAgent({ uri: proxy, headersTimeout, bodyTimeout, connect })
+      : new Agent({ headersTimeout, bodyTimeout, keepAliveTimeout: 30_000, connections: 64, connect });
     dispatchers.set(key, d);
   }
   return d;
+}
+
+/** fetch() that transparently retries once in socket-compat mode (see above). */
+export async function upstreamFetch(
+  url: string, init: Parameters<typeof fetch>[1] & object, dispatcher: { proxy?: string; headersTimeout: number; bodyTimeout: number },
+): ReturnType<typeof fetch> {
+  const run = () => fetch(url, { ...init, dispatcher: getDispatcher(dispatcher.proxy, dispatcher.headersTimeout, dispatcher.bodyTimeout) });
+  try {
+    return await run();
+  } catch (e: any) {
+    if (!socketCompat && e?.cause?.code === 'UNKNOWN' && e?.cause?.syscall === 'connect') {
+      socketCompat = true;
+      return run();
+    }
+    throw e;
+  }
 }
 
 function trimSlash(s: string) {
@@ -132,9 +154,19 @@ export function buildPassthrough(
     const v = clientHeaders[h];
     if (typeof v === 'string' && v) headers[h] = v;
   }
-  if (clientFormat === 'openai' && stream) {
+  if (clientFormat === 'openai') {
     const flags = flagsFor(p);
-    if (flags.streamOptions !== false) out.stream_options = { ...(out.stream_options || {}), include_usage: true };
+    if (stream && flags.streamOptions !== false) out.stream_options = { ...(out.stream_options || {}), include_usage: true };
+    // The client may not know which model a combo lands on: apply the same
+    // parameter fixes as translated requests (e.g. OpenAI reasoning models).
+    if (flags.maxTokensField === 'max_completion_tokens' && out.max_tokens !== undefined && out.max_completion_tokens === undefined) {
+      out.max_completion_tokens = out.max_tokens;
+      delete out.max_tokens;
+    }
+    if (flags.stripSamplingForReasoning && REASONING_MODEL_RE.test(model)) {
+      delete out.temperature;
+      delete out.top_p;
+    }
   }
   return { url: endpointUrl(p, model, stream), headers, body: out, stream };
 }
@@ -157,11 +189,10 @@ export async function fetchProviderModels(p: ProviderConfig, proxy?: string): Pr
   else url = `${base}/models`;
 
   try {
-    const res = await fetch(url, {
+    const res = await upstreamFetch(url, {
       headers: { accept: 'application/json', ...baseHeaders(p), ...authHeaders(p, key) },
-      dispatcher: getDispatcher(p.proxy || proxy, 20_000, 20_000),
       signal: AbortSignal.timeout(20_000),
-    });
+    }, { proxy: p.proxy || proxy, headersTimeout: 20_000, bodyTimeout: 20_000 });
     const text = await res.text();
     if (!res.ok) return { models: [], error: `HTTP ${res.status}: ${text.slice(0, 300)}` };
     const json: any = JSON.parse(text);

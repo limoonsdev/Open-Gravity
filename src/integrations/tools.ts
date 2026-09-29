@@ -218,7 +218,7 @@ const TOOLS: ToolDef[] = [
     id: 'gemini-cli',
     name: 'Gemini CLI',
     description: 'Google\'s terminal agent, via the Gemini generateContent endpoint.',
-    files: () => [path.join(home(), '.gemini', '.env')],
+    files: () => [path.join(home(), '.gemini', '.env'), path.join(home(), '.gemini', 'settings.json')],
     detect: () => onPath('gemini'),
     applied: (ctx) => readText(path.join(home(), '.gemini', '.env')).includes(`GOOGLE_GEMINI_BASE_URL=${ctx.baseUrl}`),
     apply: (ctx) => {
@@ -227,9 +227,17 @@ const TOOLS: ToolDef[] = [
         GEMINI_API_KEY: ctx.apiKey || 'open-gravity',
         GEMINI_MODEL: ctx.model,
       });
+      // Select API-key auth so Gemini CLI doesn't ask for a Google login.
+      const settingsFile = path.join(home(), '.gemini', 'settings.json');
+      const raw = readText(settingsFile);
+      const settings = raw ? readJson(settingsFile) : {};
+      if (!raw || Object.keys(settings).length) {
+        settings.security = { ...(settings.security || {}), auth: { ...(settings.security?.auth || {}), selectedType: 'gemini-api-key' } };
+        writeJson(settingsFile, settings);
+      }
     },
     snippet: (ctx) => ({ lang: 'bash', text: `# ~/.gemini/.env\nGOOGLE_GEMINI_BASE_URL=${ctx.baseUrl}\nGEMINI_API_KEY=${ctx.apiKey || 'open-gravity'}\nGEMINI_MODEL=${ctx.model}` }),
-    notes: 'Choose "Use Gemini API key" when Gemini CLI asks how to authenticate.',
+    notes: 'The automatic setup also selects API-key authentication. For manual setup, choose "Use Gemini API key" when Gemini CLI asks how to authenticate.',
   },
   {
     id: 'qwen-code',
