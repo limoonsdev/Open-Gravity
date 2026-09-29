@@ -19,6 +19,7 @@ export interface RouterServer {
 
 function formatForPath(path: string): ApiFormat {
   const p = normalizeApiPath(path);
+  if (p.startsWith('/api/')) return 'ollama';
   if (p.includes('/messages')) return 'anthropic';
   if (p.startsWith('/v1beta') || p.startsWith('/v1alpha') || /:(generate|streamGenerate)Content$/.test(p)) return 'gemini';
   if (p.includes('/responses')) return 'responses';
@@ -53,7 +54,7 @@ export function createRouterServer(deps: { config: ConfigStore; usage: UsageStor
         // CORS for browser-based clients; authorization still applies.
         res.setHeader('access-control-allow-origin', req.headers.origin || '*');
         res.setHeader('vary', 'origin');
-        res.setHeader('access-control-expose-headers', 'x-og-provider, x-og-model, x-og-request-id');
+        res.setHeader('access-control-expose-headers', 'x-og-provider, x-og-model, x-og-request-id, x-og-attempt, x-og-emulated-tools, x-og-cache');
         if (req.method === 'OPTIONS') {
           res.writeHead(204, {
             'access-control-allow-methods': 'GET, POST, OPTIONS',

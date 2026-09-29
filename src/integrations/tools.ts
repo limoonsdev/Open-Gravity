@@ -265,6 +265,27 @@ const TOOLS: ToolDef[] = [
     snippet: (ctx) => ({ lang: 'yaml', text: `# ~/.aider.conf.yml\nopenai-api-base: ${ctx.baseUrl}/v1\nopenai-api-key: ${ctx.apiKey || 'open-gravity'}\nmodel: openai/${ctx.model}\nweak-model: openai/${ctx.smallModel}` }),
   },
   {
+    id: 'vscode-copilot',
+    name: 'VS Code (GitHub Copilot Chat)',
+    description: 'Copilot Chat → Manage Models → Ollama, served by the router\'s Ollama-compatible API.',
+    files: () => [],
+    detect: () => false,
+    snippet: (ctx) => ({ lang: 'json', text: JSON.stringify({ 'github.copilot.chat.byok.ollamaEndpoint': ctx.baseUrl }, null, 2) }),
+    notes: 'Add this to your VS Code user settings, then Copilot Chat → Manage Models → Ollama and pick any combo or provider/model. Tool calling works with every model (emulated when the model has none).',
+  },
+  {
+    id: 'open-webui',
+    name: 'Open WebUI',
+    description: 'Admin Settings → Connections: use the router as an Ollama or OpenAI connection.',
+    files: () => [],
+    detect: () => false,
+    snippet: (ctx) => ({
+      lang: 'text',
+      text: `Ollama API:   ${ctx.baseUrl.replace('127.0.0.1', 'host.docker.internal')}\nOpenAI API:   ${ctx.baseUrl.replace('127.0.0.1', 'host.docker.internal')}/v1   (key: ${ctx.apiKey || 'open-gravity'})`,
+    }),
+    notes: 'When Open WebUI runs in Docker, start Open Gravity with --host 0.0.0.0 and create an API key.',
+  },
+  {
     id: 'cline',
     name: 'Cline / Roo Code / Kilo Code',
     description: 'VS Code agents. Configure in the extension settings.',

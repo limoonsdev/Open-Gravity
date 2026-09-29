@@ -6,6 +6,8 @@ import { parseOpenAIRequest, OpenAIStreamEncoder, OpenAIStreamDecoder, buildOpen
 import { parseAnthropicRequest, AnthropicStreamEncoder, AnthropicStreamDecoder, buildAnthropicResponse, anthropicError } from './anthropic';
 import { parseGeminiRequest, GeminiStreamEncoder, GeminiStreamDecoder, buildGeminiResponse, geminiError } from './gemini';
 import { parseResponsesRequest, ResponsesStreamEncoder, ResponsesStreamDecoder, buildResponsesResponse, customToolNames } from './responses';
+import { parseOllamaChat, parseOllamaGenerate, OllamaStreamEncoder, buildOllamaResponse } from './ollama';
+import { parseCompletionsRequest, CompletionsStreamEncoder, buildCompletionsResponse } from './completions';
 
 export * from './ir';
 
@@ -26,7 +28,15 @@ export function parseClientRequest(format: ApiFormat, body: any, opts: { model?:
     case 'anthropic': return parseAnthropicRequest(body);
     case 'responses': return parseResponsesRequest(body);
     case 'gemini': return parseGeminiRequest(body, opts.model || '', !!opts.stream);
+    case 'ollama': return parseOllamaChat(body, !!opts.stream);
+    case 'ollama-generate': return parseOllamaGenerate(body, !!opts.stream);
+    case 'completions': return parseCompletionsRequest(body);
   }
+}
+
+/** Formats that stream NDJSON lines instead of Server-Sent Events. */
+export function isNdjson(format: ApiFormat): boolean {
+  return format === 'ollama' || format === 'ollama-generate';
 }
 
 export function createEncoder(ctx: ClientContext): StreamEncoder {
@@ -35,6 +45,9 @@ export function createEncoder(ctx: ClientContext): StreamEncoder {
     case 'anthropic': return new AnthropicStreamEncoder(ctx.model, ctx.estimatedInput);
     case 'responses': return new ResponsesStreamEncoder(ctx.model, customToolNames(ctx.ir));
     case 'gemini': return new GeminiStreamEncoder(ctx.model);
+    case 'ollama': return new OllamaStreamEncoder(ctx.model, 'chat');
+    case 'ollama-generate': return new OllamaStreamEncoder(ctx.model, 'generate');
+    case 'completions': return new CompletionsStreamEncoder(ctx.model, ctx.ir.includeUsage);
   }
 }
 
@@ -53,6 +66,9 @@ export function buildClientResponse(ctx: ClientContext, res: IRResponse): any {
     case 'anthropic': return buildAnthropicResponse(res, ctx.model);
     case 'responses': return buildResponsesResponse(res, ctx.model, customToolNames(ctx.ir));
     case 'gemini': return buildGeminiResponse(res, ctx.model);
+    case 'ollama': return buildOllamaResponse(res, ctx.model, 'chat');
+    case 'ollama-generate': return buildOllamaResponse(res, ctx.model, 'generate');
+    case 'completions': return buildCompletionsResponse(res, ctx.model);
   }
 }
 
@@ -84,6 +100,8 @@ export function errorBody(format: ApiFormat, status: number, message: string): a
   switch (format) {
     case 'anthropic': return anthropicError(message, type);
     case 'gemini': return geminiError(message, status, GEMINI_STATUS[status] || 'INTERNAL');
+    case 'ollama':
+    case 'ollama-generate': return { error: message };
     default: return openAIError(message, type, status);
   }
 }

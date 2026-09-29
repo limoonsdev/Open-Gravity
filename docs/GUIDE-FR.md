@@ -2,7 +2,13 @@
 
 Open Gravity est un **routeur IA local** : un seul point d'accès (`http://127.0.0.1:18080`) pour tous vos modèles, avec combos de secours, rotation de clés, statistiques et un panel web, le tout dans **un seul exécutable**.
 
-Vos outils (Claude Code, Codex, Gemini CLI, OpenCode, Cursor, Cline, Aider, SDK…) gardent leur protocole habituel ; Open Gravity traduit à la volée entre **OpenAI Chat**, **Anthropic Messages**, **OpenAI Responses** et **Gemini**, y compris le streaming, les appels d'outils, le raisonnement et les images.
+Vos outils (Claude Code, Codex, Gemini CLI, OpenCode, Cursor, Cline, Aider, VS Code Copilot, Open WebUI, SDK…) gardent leur protocole habituel ; Open Gravity traduit à la volée entre **OpenAI Chat**, **Anthropic Messages**, **OpenAI Responses**, **Gemini**, **Ollama** et l'ancienne API **Completions**, y compris le streaming, les appels d'outils, le raisonnement et les images.
+
+Points forts :
+
+- **103 fournisseurs prêts à l'emploi** (cloud, passerelles, fournisseurs chinois, 17 moteurs locaux) et une **base de 3 500+ modèles** (fenêtre de contexte, sortie max, outils, vision, prix), plus n'importe quel point d'accès compatible OpenAI / Anthropic / Gemini / Responses.
+- **Appels d'outils automatiques** : si un modèle ne sait pas appeler d'outils, Open Gravity les **émule** (description dans le prompt, blocs `<tool_call>` reconvertis en vrais appels d'outils pendant le streaming). Claude Code et Codex fonctionnent alors normalement sur ce modèle.
+- **Compatibilité auto-réparatrice** : quand un fournisseur refuse une requête (outils, paramètre inconnu, `max_tokens` trop grand, rôle system, images, mode JSON…), la requête est corrigée, relancée immédiatement, et la correction est mémorisée.
 
 ---
 
@@ -35,12 +41,29 @@ Dans le panel : **Providers → Add provider**, choisissez le fournisseur et col
 
 - **Gratuit pour commencer** : Google Gemini (AI Studio), OpenRouter (modèles `:free`), Groq, Cerebras, NVIDIA NIM, GitHub Models.
 - **En local, sans clé** : Ollama, LM Studio.
-- **Antigravity** : utilise l'application Google Antigravity ouverte et connectée sur votre PC (texte uniquement).
-- **Personnalisé** : n'importe quel point d'accès compatible OpenAI, Anthropic ou Gemini.
+- **Cloud et entreprise** : Azure OpenAI (nom de ressource demandé), Amazon Bedrock (région), Vertex AI, Cloudflare Workers AI (ID de compte), Databricks, Cohere, SambaNova, Together, Fireworks, Nebius, Novita, Scaleway, OVHcloud…
+- **Chine** : Qwen/DashScope, Zhipu GLM, Kimi, Doubao (Volcengine), Qianfan, Hunyuan, SiliconFlow, ModelScope…
+- **Moteurs locaux** : Ollama, LM Studio, llama.cpp, vLLM, SGLang, TGI, LocalAI, Jan, KoboldCpp, text-generation-webui, Xinference, GPT4All, Lemonade, Docker Model Runner, MLX, llamafile, Msty.
+- **Antigravity** : utilise l'application Google Antigravity ouverte et connectée sur votre PC (les appels d'outils sont émulés automatiquement).
+- **Personnalisé** : n'importe quel point d'accès compatible OpenAI, Anthropic, Gemini ou Responses. Dans l'onglet *General* du fournisseur, vous pouvez choisir le mode d'authentification (Bearer, `x-api-key`, `api-key`, en-tête personnalisé avec préfixe, aucune) et le mode d'appel d'outils.
 
 Vous pouvez coller **plusieurs clés** (une par ligne) : elles seront utilisées à tour de rôle et mises en pause automatiquement si elles tombent en limite de débit ou en erreur.
 
-La liste des modèles est récupérée automatiquement. Le bouton **Test** envoie un mini-message pour vérifier la clé.
+La liste des modèles est récupérée automatiquement. Le bouton **Test** envoie un mini-message pour vérifier la clé. Chaque modèle affiche ses capacités connues (contexte, vision, raisonnement, outils émulés).
+
+### Appels d'outils (tool calling)
+
+Onglet *General* d'un fournisseur → **Tool calling** :
+
+- **Auto** (recommandé) : outils natifs ; si la base de modèles indique que le modèle n'en a pas, ou si le fournisseur refuse le champ `tools`, Open Gravity bascule sur l'émulation et s'en souvient.
+- **Native only** : jamais d'émulation.
+- **Always emulate** : toujours émuler (utile pour des serveurs qui acceptent `tools` mais les ignorent).
+
+Dans tous les cas, les arguments d'outils mal formés (JSON cassé, mauvais types, nom d'outil mal écrit) sont réparés, et les balises `<think>` deviennent de vrais blocs de raisonnement.
+
+### Corrections apprises
+
+L'onglet **Compatibility** de chaque fournisseur (et *Settings → Compatibility & performance*) liste les corrections apprises par modèle (outils émulés, paramètre retiré, sortie plafonnée, rôle system fusionné…). Le bouton *Reset* les oublie.
 
 ---
 
@@ -77,6 +100,9 @@ Stratégies :
 - **Fallback** : toujours dans l'ordre (le plus courant).
 - **Round-robin** : répartit la charge en changeant de première cible à chaque requête.
 - **Random** : ordre aléatoire à chaque requête.
+- **Fastest** : la cible la plus rapide d'abord (temps jusqu'au premier jeton mesuré en continu).
+- **Cheapest** : la cible la moins chère d'abord (prix de la base de modèles ; les modèles locaux sont gratuits).
+- **Race** : interroge les deux premières cibles en même temps, la plus rapide gagne et l'autre est annulée (plus rapide, mais consomme plus de jetons).
 
 Définissez votre combo préféré comme **route par défaut** (page *Models & routing*).
 
@@ -115,6 +141,10 @@ base_url = "http://127.0.0.1:18080/v1"
 wire_api = "responses"
 ```
 
+### VS Code Copilot, Open WebUI et applications Ollama
+
+Open Gravity répond aussi comme un serveur **Ollama** (`/api/chat`, `/api/tags`, `/api/show`…). Dans VS Code Copilot Chat : *Manage Models → Ollama* avec l'adresse `http://127.0.0.1:18080`. Dans Open WebUI ou Msty : URL Ollama `http://127.0.0.1:18080`. Tous vos modèles cloud apparaissent alors comme des modèles Ollama.
+
 ### Cursor
 
 Cursor appelle les points d'accès personnalisés depuis ses propres serveurs : `localhost` n'est donc pas joignable. Exposez le routeur via un tunnel (cloudflared, ngrok…) et créez une clé API dans la page *API keys*.
@@ -127,7 +157,9 @@ Cursor appelle les points d'accès personnalisés depuis ses propres serveurs : 
 - **Requests** : journal en direct. Cliquez une ligne pour voir chaque tentative (fournisseur, clé, statut, erreur). Activez *Capture request bodies* dans *Settings* pour inspecter les requêtes et réponses complètes (gardées en mémoire, 50 dernières).
 - **Playground** : discutez avec n'importe quel modèle ou combo en passant par le routeur.
 
-Les coûts sont **estimés** à partir des prix publics ; les offres gratuites et remises ne sont pas prises en compte.
+Les coûts sont **estimés** à partir des prix publics de la base de modèles ; les offres gratuites et remises ne sont pas prises en compte. Dans *Requests*, les badges indiquent les requêtes aux **outils émulés**, **corrigées automatiquement** (*auto-fixed*) ou servies depuis le **cache**.
+
+*Settings → Compatibility & performance* permet aussi d'activer un **cache de réponses** (requêtes identiques servies instantanément) et de mettre à jour la **base de modèles** (automatique chaque semaine).
 
 ---
 
@@ -168,5 +200,7 @@ Relancer l'exécutable alors qu'il tourne déjà ouvre simplement le panel de l'
 | « All matching provider keys are cooling down » | Toutes les clés sont en pause après des erreurs : patientez ou réinitialisez-les |
 | Port déjà utilisé | Open Gravity prend automatiquement le port suivant, ou utilisez `--port` |
 | Derrière un proxy d'entreprise | *Settings → Network → Upstream HTTP proxy* |
+| « does not support tools » / l'agent n'utilise pas les outils | Laissez *Tool calling* sur *Auto* (ou choisissez *Always emulate*) dans l'onglet *General* du fournisseur |
+| Une correction apprise ne convient plus (modèle mis à jour) | Onglet *Compatibility* du fournisseur → *Reset* |
 
 Les données sont dans `~/.open-gravity/` : `config.json` (configuration, rechargée à chaud si vous l'éditez), `usage/` (historique), `backups/` (anciennes configurations des outils).

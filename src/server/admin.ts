@@ -7,6 +7,8 @@ import { logger } from '../core/logger';
 import { hashPassword, verifyPassword, maskKey, randomId, randomKey, slugify, VERSION, dataDir, isLoopback } from '../core/util';
 import type { Range } from '../core/usage';
 import { CATALOG, getTemplate } from '../providers/catalog';
+import { modelDb, updateModelDb } from '../core/modeldb';
+import { responseCache } from '../router/cache';
 import { fetchProviderModels } from '../providers/upstream';
 import { antigravityStatus } from '../providers/antigravity';
 import { health } from '../router/health';
@@ -28,12 +30,24 @@ function publicBaseUrl(info: ServerInfo): string {
   return `http://${host.includes(':') ? `[${host}]` : host}:${info.port}`;
 }
 
+/** Compact capabilities per model: [context, maxOutput, tools(1 native / 0 none / -1 unknown), vision, reasoning]. */
+function modelCaps(p: ProviderConfig): Record<string, [number, number, number, number, number]> {
+  const out: Record<string, [number, number, number, number, number]> = {};
+  for (const m of p.models) {
+    const i = modelDb.lookup(p.type, m);
+    if (i) out[m] = [i.maxInput, i.maxOutput, i.tools === true ? 1 : i.tools === false ? 0 : -1, i.vision ? 1 : 0, i.reasoning ? 1 : 0];
+  }
+  return out;
+}
+
 function providerView(p: ProviderConfig, keyStats: ReturnType<Deps['usage']['keyStats']>) {
   const tpl = getTemplate(p.type);
   return {
     ...p,
     keyOptional: !!tpl?.keyOptional,
     color: tpl?.color || '#64748b',
+    toolMode: p.format === 'antigravity' ? 'emulate' : p.toolMode || 'auto',
+    caps: modelCaps(p),
     keys: p.keys.map((k) => ({
       id: k.id,
       label: k.label,
@@ -61,10 +75,14 @@ function stateView(cfg: AppConfig, deps: Deps, info: ServerInfo) {
     combos: cfg.combos,
     aliases: cfg.aliases,
     apiKeys: cfg.apiKeys.map((k) => ({ ...k, masked: maskKey(k.key) })),
-    catalog: CATALOG.map(({ type, name, format, baseUrl, category, description, keyUrl, keyOptional, freeTier, models, color }) => ({
-      type, name, format, baseUrl, category, description, keyUrl, keyOptional, freeTier, models, color,
+    catalog: CATALOG.map(({ type, name, format, baseUrl, category, description, keyUrl, keyOptional, freeTier, models, color, vars, toolMode }) => ({
+      type, name, format, baseUrl, category, description, keyUrl, keyOptional, freeTier, models, color, vars, toolMode,
     })),
     models: listRoutableModels(cfg),
+    compat: cfg.compat,
+    latencies: health.latencies(),
+    modelDb: modelDb.info,
+    cacheSize: responseCache.size,
   };
 }
 
@@ -137,7 +155,8 @@ export async function routeAdmin(req: IncomingMessage, res: ServerResponse, url:
 
   if (path === '/settings' && method === 'PUT') {
     const allowed = ['port', 'host', 'defaultModel', 'unknownModelFallback', 'requireApiKey', 'openBrowser', 'headersTimeoutMs', 'idleTimeoutMs',
-      'maxAttempts', 'cooldownRateLimitMs', 'cooldownAuthMs', 'cooldownServerMs', 'logRetentionDays', 'captureBodies', 'upstreamProxy', 'passthrough'] as const;
+      'maxAttempts', 'cooldownRateLimitMs', 'cooldownAuthMs', 'cooldownServerMs', 'logRetentionDays', 'captureBodies', 'upstreamProxy', 'passthrough',
+      'adaptiveCompat', 'cacheTtlSeconds', 'modelDbAutoUpdate'] as const;
     store.update((c) => {
       for (const k of allowed) if (k in body) (c.settings as any)[k] = body[k];
       c.settings.port = Math.min(65535, Math.max(1, Number(c.settings.port) || 18080));
@@ -166,7 +185,10 @@ export async function routeAdmin(req: IncomingMessage, res: ServerResponse, url:
       .map((k: string) => String(k).trim()).filter(Boolean)
       .map((k: string, i: number) => ({ id: randomId(8), label: `key ${i + 1}`, key: k, enabled: true }));
     if (!keys.length && !tpl.keyOptional) throw new HttpError(400, 'An API key is required for this provider');
-    const p = newProviderFromTemplate(tpl.type, cfg, { name: body.name, baseUrl: body.baseUrl, keys, id: body.id });
+    const vars: Record<string, string> = body.vars && typeof body.vars === 'object' ? body.vars : {};
+    const missing = (tpl.vars || []).filter((v) => !String(vars[v.name] || '').trim() && !body.baseUrl);
+    if (missing.length) throw new HttpError(400, `Please fill in: ${missing.map((v) => v.label).join(', ')}`);
+    const p = newProviderFromTemplate(tpl.type, cfg, { name: body.name, baseUrl: body.baseUrl, keys, id: body.id, vars });
     if (Array.isArray(body.models) && body.models.length) p.models = body.models;
     store.update((c) => c.providers.push(p));
     logger.success(`Provider added: ${p.name} (${p.id})`);
@@ -208,6 +230,10 @@ export async function routeAdmin(req: IncomingMessage, res: ServerResponse, url:
         if (body.flags !== undefined) cur.flags = body.flags;
         if (body.timeoutMs !== undefined) cur.timeoutMs = Number(body.timeoutMs) || undefined;
         if (body.proxy !== undefined) cur.proxy = String(body.proxy || '').trim() || undefined;
+        if (body.toolMode !== undefined) cur.toolMode = ['auto', 'native', 'emulate'].includes(body.toolMode) ? body.toolMode : 'auto';
+        if (body.auth !== undefined && ['bearer', 'anthropic', 'anthropic-compat', 'goog', 'api-key', 'custom', 'none'].includes(body.auth)) cur.auth = body.auth;
+        if (body.authHeader !== undefined) cur.authHeader = String(body.authHeader || '').trim() || undefined;
+        if (body.authPrefix !== undefined) cur.authPrefix = String(body.authPrefix ?? '');
         if (newId !== id) {
           cur.id = newId;
           // Keep combos and aliases pointing at the renamed provider.
@@ -425,6 +451,29 @@ export async function routeAdmin(req: IncomingMessage, res: ServerResponse, url:
     if (!body?.settings?.dashboardPassword) next.settings.dashboardPassword = cfg.settings.dashboardPassword;
     store.replace(next);
     logger.success('Configuration imported');
+    return json(res, 200, { ok: true });
+  }
+
+  // ---- compatibility fixes, model database, cache
+  if (path === '/compat' && method === 'DELETE') {
+    const key = url.searchParams.get('key');
+    const provider = url.searchParams.get('provider');
+    store.update((c) => {
+      for (const k of Object.keys(c.compat)) {
+        if ((key && k === key) || (provider && k.startsWith(`${provider}::`)) || (!key && !provider)) delete c.compat[k];
+      }
+    });
+    return json(res, 200, { ok: true });
+  }
+  if (path === '/modeldb/update' && method === 'POST') {
+    try {
+      return json(res, 200, await updateModelDb());
+    } catch (e: any) {
+      throw new HttpError(502, e.message);
+    }
+  }
+  if (path === '/cache/clear' && method === 'POST') {
+    responseCache.clear();
     return json(res, 200, { ok: true });
   }
 

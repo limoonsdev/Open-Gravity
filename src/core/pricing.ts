@@ -1,3 +1,5 @@
+import { modelDb } from './modeldb';
+
 // Approximate public list prices (USD per 1M tokens) used for cost estimates.
 // Matched by regex against the upstream model id; first match wins.
 // These are estimates only - providers change prices and some have free tiers.
@@ -55,9 +57,14 @@ export function priceFor(model: string): Price | undefined {
   return undefined;
 }
 
-export function estimateCost(model: string, u: { input: number; output: number; cacheRead?: number; cacheWrite?: number }, local = false): number {
+export function estimateCost(model: string, u: { input: number; output: number; cacheRead?: number; cacheWrite?: number }, local = false, providerType?: string): number {
   if (local) return 0;
-  const p = priceFor(model);
+  if (/:free$/.test(model)) return 0;
+  // Prefer the model database (per provider, current prices), then the fallback table.
+  const info = modelDb.lookup(providerType, model);
+  const p: Price | undefined = info && (info.inputCost || info.outputCost)
+    ? { in: info.inputCost, out: info.outputCost, cacheRead: info.cacheReadCost || undefined, cacheWrite: info.cacheWriteCost || undefined }
+    : priceFor(model);
   if (!p) return 0;
   const cost = (u.input * p.in + u.output * p.out + (u.cacheRead || 0) * (p.cacheRead ?? p.in) + (u.cacheWrite || 0) * (p.cacheWrite ?? p.in)) / 1e6;
   return Math.round(cost * 1e6) / 1e6;

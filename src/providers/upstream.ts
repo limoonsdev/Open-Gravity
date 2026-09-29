@@ -62,7 +62,8 @@ export function endpointUrl(p: ProviderConfig, model: string, stream: boolean): 
     case 'responses': return `${base}/responses`;
     case 'anthropic': return /\/v1$/.test(base) ? `${base}/messages` : `${base}/v1/messages`;
     case 'gemini': {
-      const root = /\/v1(beta)?$/.test(base) ? base : `${base}/v1beta`;
+      const raw = flagsFor(p).geminiRawPath;
+      const root = raw || /\/v1(beta)?$/.test(base) ? base : `${base}/v1beta`;
       const m = encodeURIComponent(model).replace(/%2F/g, '/');
       return stream ? `${root}/models/${m}:streamGenerateContent?alt=sse` : `${root}/models/${m}:generateContent`;
     }
@@ -87,6 +88,14 @@ export function authHeaders(p: ProviderConfig, key: ProviderKey | undefined): Re
       break;
     case 'goog':
       if (k) h['x-goog-api-key'] = k;
+      break;
+    case 'api-key':
+      if (k) h['api-key'] = k;
+      break;
+    case 'custom':
+      if (k) h[(p.authHeader || 'authorization').toLowerCase()] = `${p.authPrefix ?? ''}${k}`;
+      break;
+    case 'none':
       break;
     default:
       if (k) h.authorization = `Bearer ${k}`;

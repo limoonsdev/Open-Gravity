@@ -5,8 +5,10 @@ import path from 'path';
 import { EventEmitter } from 'events';
 import { dataDir, randomId, randomKey, writeFileAtomic, slugify } from './util';
 import { logger } from './logger';
-import type { AuthStyle, ProviderFlags, ProviderFormat } from '../providers/catalog';
-import { getTemplate } from '../providers/catalog';
+import type { AuthStyle, ProviderFlags, ProviderFormat, ToolMode } from '../providers/catalog';
+import { getTemplate, fillVars } from '../providers/catalog';
+import type { CompatFix } from '../router/compat';
+import { modelDb } from './modeldb';
 
 export interface ProviderKey {
   id: string;
@@ -30,10 +32,15 @@ export interface ProviderConfig {
   flags?: ProviderFlags;
   timeoutMs?: number;
   proxy?: string;
+  /** Tool calling: 'auto' (detect), 'native' (never emulate) or 'emulate' (prompt-based). */
+  toolMode?: ToolMode;
+  /** For auth 'custom': header name and value prefix. */
+  authHeader?: string;
+  authPrefix?: string;
   createdAt: number;
 }
 
-export type ComboStrategy = 'fallback' | 'round-robin' | 'random';
+export type ComboStrategy = 'fallback' | 'round-robin' | 'random' | 'fastest' | 'cheapest' | 'race';
 
 export interface ComboConfig {
   id: string;
@@ -70,6 +77,12 @@ export interface Settings {
   captureBodies: boolean;
   upstreamProxy?: string;
   passthrough: boolean;
+  /** Learn and apply fixes when a provider rejects a request (unsupported params, tools...). */
+  adaptiveCompat: boolean;
+  /** Cache identical requests for this many seconds (0 = off). */
+  cacheTtlSeconds: number;
+  /** Refresh the model capability database weekly. */
+  modelDbAutoUpdate: boolean;
 }
 
 export interface AppConfig {
@@ -79,6 +92,8 @@ export interface AppConfig {
   combos: ComboConfig[];
   aliases: Record<string, string>;
   apiKeys: RouterKey[];
+  /** Compatibility fixes learned per "provider::model". */
+  compat: Record<string, CompatFix>;
 }
 
 export const DEFAULT_PORT = 18080;
@@ -103,11 +118,15 @@ export function defaultConfig(): AppConfig {
       logRetentionDays: 30,
       captureBodies: false,
       passthrough: true,
+      adaptiveCompat: true,
+      cacheTtlSeconds: 0,
+      modelDbAutoUpdate: true,
     },
     providers: [],
     combos: [],
     aliases: {},
     apiKeys: [],
+    compat: {},
   };
 }
 
@@ -219,6 +238,7 @@ export function normalize(raw: any): AppConfig {
     combos: Array.isArray(raw?.combos) ? raw.combos : [],
     aliases: raw?.aliases && typeof raw.aliases === 'object' ? raw.aliases : {},
     apiKeys: Array.isArray(raw?.apiKeys) ? raw.apiKeys : [],
+    compat: raw?.compat && typeof raw.compat === 'object' ? raw.compat : {},
   };
   if (!cfg.settings.sessionSecret) cfg.settings.sessionSecret = randomKey('');
   cfg.providers = cfg.providers.map((p: any) => {
@@ -236,6 +256,9 @@ export function normalize(raw: any): AppConfig {
       rotation: p.rotation === 'fill-first' ? 'fill-first' : 'round-robin',
       headers: p.headers && typeof p.headers === 'object' ? p.headers : undefined,
       flags: p.flags,
+      toolMode: ['auto', 'native', 'emulate'].includes(p.toolMode) ? p.toolMode : tpl?.toolMode,
+      authHeader: p.authHeader ?? tpl?.authHeader,
+      authPrefix: p.authPrefix ?? tpl?.authPrefix,
       timeoutMs: p.timeoutMs,
       proxy: p.proxy,
       createdAt: p.createdAt || Date.now(),
@@ -247,7 +270,7 @@ export function normalize(raw: any): AppConfig {
       id: String(c.id),
       description: c.description,
       targets: Array.isArray(c.targets) ? c.targets.filter((t: any) => typeof t === 'string' && t) : [],
-      strategy: ['fallback', 'round-robin', 'random'].includes(c.strategy) ? c.strategy : 'fallback',
+      strategy: ['fallback', 'round-robin', 'random', 'fastest', 'cheapest', 'race'].includes(c.strategy) ? c.strategy : 'fallback',
       enabled: c.enabled !== false,
     }));
   cfg.apiKeys = cfg.apiKeys.filter((k: any) => k && k.key).map((k: any) => ({
@@ -279,7 +302,9 @@ function migrateLegacy(cfg: AppConfig) {
   }
 }
 
-export function newProviderFromTemplate(type: string, cfg: AppConfig, overrides: Partial<ProviderConfig> = {}): ProviderConfig {
+export function newProviderFromTemplate(
+  type: string, cfg: AppConfig, overrides: Partial<ProviderConfig> & { vars?: Record<string, string> } = {},
+): ProviderConfig {
   const tpl = getTemplate(type) || getTemplate('openai-compatible')!;
   let id = slugify(overrides.id || (tpl.category === 'custom' ? overrides.name || 'custom' : tpl.type));
   const taken = new Set(cfg.providers.map((p) => p.id));
@@ -293,14 +318,18 @@ export function newProviderFromTemplate(type: string, cfg: AppConfig, overrides:
     type: tpl.type,
     name: overrides.name || tpl.name,
     format: tpl.format,
-    baseUrl: (overrides.baseUrl || tpl.baseUrl).replace(/\/+$/, ''),
+    baseUrl: fillVars(overrides.baseUrl || tpl.baseUrl, overrides.vars).replace(/\/+$/, ''),
     auth: tpl.auth,
     keys: overrides.keys || [],
-    models: overrides.models || [...tpl.models],
+    // Providers without a model-list API also get what the model database knows about them.
+    models: overrides.models || (tpl.modelsApi === 'none' ? [...new Set([...tpl.models, ...modelDb.modelsFor(tpl.type).slice(0, 200)])] : [...tpl.models]),
     enabled: true,
     rotation: 'round-robin',
     headers: tpl.headers ? { ...tpl.headers, ...(overrides.headers || {}) } : overrides.headers,
     flags: tpl.flags ? { ...tpl.flags } : undefined,
+    toolMode: tpl.toolMode,
+    authHeader: tpl.authHeader,
+    authPrefix: tpl.authPrefix,
     createdAt: Date.now(),
   };
 }

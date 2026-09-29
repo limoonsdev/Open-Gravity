@@ -205,17 +205,20 @@ async function main() {
   console.log(`Open Gravity v${pkg.version} - building single executable(s) with Node ${process.version}`);
   const bundlePath = await bundle({ minify: false });
 
-  const seaConfig = path.join(root, 'build', 'sea-config.json');
-  const blobPath = path.join(root, 'build', 'sea-prep.blob');
-  fs.writeFileSync(seaConfig, JSON.stringify({
-    main: bundlePath,
-    output: blobPath,
-    disableExperimentalSEAWarning: true,
-    useSnapshot: false,
-    useCodeCache: false,
-  }, null, 2));
-  execFileSync(process.execPath, ['--experimental-sea-config', seaConfig], { stdio: 'inherit' });
-  const blob = fs.readFileSync(blobPath);
+  // Portable blob for cross-compiled targets; the host target also gets V8's
+  // code cache baked in (faster startup), which is only valid for this exact
+  // Node version + platform + architecture.
+  const makeBlob = (name, useCodeCache) => {
+    const seaConfig = path.join(root, 'build', `${name}.json`);
+    const blobPath = path.join(root, 'build', `${name}.blob`);
+    fs.writeFileSync(seaConfig, JSON.stringify({
+      main: bundlePath, output: blobPath, disableExperimentalSEAWarning: true, useSnapshot: false, useCodeCache,
+    }, null, 2));
+    execFileSync(process.execPath, ['--experimental-sea-config', seaConfig], { stdio: 'inherit' });
+    return fs.readFileSync(blobPath);
+  };
+  const portableBlob = targets.some((t) => t !== hostTarget) ? makeBlob('sea-prep', false) : null;
+  const nativeBlob = targets.includes(hostTarget) ? makeBlob('sea-prep-native', true) : null;
 
   const { inject } = require('postject');
   fs.mkdirSync(outDir, { recursive: true });
@@ -233,7 +236,7 @@ async function main() {
     }
     if (info.plat === 'win') await brandWindowsExe(out);
 
-    await inject(out, 'NODE_SEA_BLOB', blob, {
+    await inject(out, 'NODE_SEA_BLOB', target === hostTarget ? nativeBlob : portableBlob, {
       sentinelFuse: SENTINEL,
       machoSegmentName: info.plat === 'macos' ? 'NODE_SEA' : undefined,
     });

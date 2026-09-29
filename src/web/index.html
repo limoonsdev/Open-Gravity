@@ -148,7 +148,7 @@ svg.i { width: 16px; height: 16px; flex: none; stroke: currentColor; fill: none;
 .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .row.nowrap { flex-wrap: nowrap; }
 .spacer { flex: 1; }
-.stack { display: grid; gap: 12px; grid-template-columns: minmax(0, 1fr); }
+.stack { display: grid; gap: 12px; grid-template-columns: minmax(0, 1fr); align-content: start; }
 .muted { color: var(--muted); }
 .small { font-size: 12.5px; }
 .tiny { font-size: 11.5px; }
@@ -918,7 +918,7 @@ function catalogItem(t) {
 function openCatalog() {
   const search = h('input', { class: 'input', placeholder: 'Search providers…', 'aria-label': 'Search providers' });
   const list = h('div');
-  const groups = [['popular', 'Popular'], ['more', 'More providers'], ['local', 'Local'], ['custom', 'Custom endpoint']];
+  const groups = [['popular', 'Popular'], ['cloud', 'Cloud & API providers'], ['gateway', 'Gateways & routers'], ['china', 'China'], ['local', 'Local engines'], ['custom', 'Custom endpoint (any OpenAI / Anthropic / Gemini compatible API)']];
   const draw = () => {
     const q = search.value.toLowerCase();
     list.replaceChildren(...groups.map(([cat, label]) => {
@@ -926,10 +926,11 @@ function openCatalog() {
       if (!items.length) return null;
       return h('div', null, h('div', { class: 'section-title' }, label), h('div', { class: 'catalog' }, items.map(catalogItem)));
     }).filter(Boolean));
+    if (!list.childElementCount) list.append(h('div', { class: 'muted', style: { padding: '12px 0' } }, 'No preset matches. Any OpenAI, Anthropic or Gemini compatible API works with a "Custom endpoint".'));
   };
   search.oninput = draw;
   draw();
-  openModal({ title: 'Add a provider', wide: true, body: h('div', null, search, list) });
+  openModal({ title: `Add a provider (${S.state.catalog.length} presets)`, wide: true, body: h('div', null, search, list) });
 }
 
 function addProviderForm(t) {
@@ -940,13 +941,15 @@ function addProviderForm(t) {
   const baseUrl = h('input', { class: 'input mono', value: isCustom ? '' : t.baseUrl, placeholder: t.baseUrl });
   const keys = h('textarea', { class: 'input mono', rows: 3, placeholder: t.keyOptional ? 'Optional' : 'Paste one or more keys (one per line) to rotate between accounts' });
   const models = h('input', { class: 'input mono', placeholder: 'model-a, model-b (optional, can be fetched later)' });
+  const varInputs = (t.vars || []).map((v) => ({ v, input: h('input', { class: 'input mono', placeholder: v.placeholder || '' }) }));
   const body = h('div', { class: 'form' },
     h('div', { class: 'row nowrap' }, avatar(t.name, t.color), h('div', null, h('div', { class: 'strong' }, t.name), h('div', { class: 'muted small' }, t.description))),
-    t.type === 'antigravity' ? h('div', { class: 'muted small' }, 'Requires the Antigravity desktop app to be running and signed in on this computer. Responses are text-only (no tool calls).') : null,
+    t.type === 'antigravity' ? h('div', { class: 'muted small' }, 'Requires the Antigravity desktop app to be running and signed in on this computer. Tool calls are emulated automatically.') : null,
     isCustom ? field('Name', name, 'Also used as the model prefix (e.g. "my-endpoint/model").') : null,
-    t.type !== 'antigravity' ? field('Base URL', baseUrl, isCustom ? `Format: ${t.format}. Example: ${t.baseUrl}` : isLocal ? 'Change it if the server runs elsewhere.' : null) : null,
+    varInputs.map(({ v, input }) => field(v.label, input)),
+    t.type !== 'antigravity' && !varInputs.length ? field('Base URL', baseUrl, isCustom ? `Format: ${t.format}. Example: ${t.baseUrl}` : isLocal ? 'Change it if the server runs elsewhere.' : null) : null,
     t.type !== 'antigravity' ? field(t.keyOptional ? 'API key (optional)' : 'API key', keys, t.keyUrl ? h('span', null, 'Get a key: ', h('a', { href: t.keyUrl, target: '_blank', rel: 'noopener noreferrer' }, t.keyUrl.replace(/^https?:\/\//, ''), ' ↗')) : null) : null,
-    isCustom || isLocal ? field('Models', models) : null);
+    isCustom || isLocal || varInputs.length ? field(t.type === 'azure-openai' ? 'Deployments' : 'Models', models) : null);
   openModal({
     title: 'Add ' + t.name, body,
     actions: [
@@ -956,7 +959,8 @@ function addProviderForm(t) {
           const payload = {
             type: t.type,
             name: isCustom ? name.value.trim() || 'custom' : undefined,
-            baseUrl: baseUrl.value.trim() || undefined,
+            baseUrl: varInputs.length ? undefined : baseUrl.value.trim() || undefined,
+            vars: Object.fromEntries(varInputs.map(({ v, input }) => [v.name, input.value.trim()])),
             keys: keys.value.split(/[\n,]+/).map((x) => x.trim()).filter(Boolean),
             models: models.value.split(/[\s,]+/).map((x) => x.trim()).filter(Boolean),
           };
@@ -964,7 +968,7 @@ function addProviderForm(t) {
           await loadState();
           location.hash = '#/providers';
           await render();
-          setTimeout(() => editProvider(r.id, isLocal || isCustom ? 'models' : 'general'), 50);
+          setTimeout(() => editProvider(r.id, isLocal || isCustom || varInputs.length ? 'models' : 'general'), 50);
         },
       },
     ],
@@ -1037,7 +1041,8 @@ function editProvider(id, tab = 'general') {
   let current = tab;
   const tabs = h('div', { class: 'tabs', role: 'tablist' });
   const content = h('div');
-  const tabDefs = [['general', 'General'], ['keys', `Keys (${p.keys.length})`], ['models', `Models (${p.models.length})`]];
+  const learned = Object.keys(S.state.compat || {}).filter((k) => k.startsWith(p.id + '::')).length;
+  const tabDefs = [['general', 'General'], ['keys', `Keys (${p.keys.length})`], ['models', `Models (${p.models.length})`], ['compat', `Compatibility${learned ? ` (${learned})` : ''}`]];
   const drawTabs = () => {
     tabs.replaceChildren(...tabDefs.map(([k, l]) => h('button', { class: current === k ? 'on' : '', role: 'tab', onclick: () => { current = k; drawTabs(); drawContent(); } }, l)));
   };
@@ -1052,9 +1057,21 @@ function editProvider(id, tab = 'general') {
       const timeout = h('input', { class: 'input', type: 'number', min: 0, value: p.timeoutMs || '', placeholder: 'default' });
       const proxy = h('input', { class: 'input mono', value: p.proxy || '', placeholder: 'http://user:pass@host:port (optional)' });
       const headers = h('textarea', { class: 'input mono', rows: 3, placeholder: '{"X-Custom": "value"}' }, p.headers ? JSON.stringify(p.headers, null, 2) : '');
+      const toolMode = h('select', { class: 'input', disabled: p.format === 'antigravity' },
+        [['auto', 'Auto (native, emulated if missing)'], ['native', 'Native only'], ['emulate', 'Always emulate']]
+          .map(([v, l]) => h('option', { value: v, selected: (p.toolMode || 'auto') === v }, l)));
+      const auth = h('select', { class: 'input' },
+        [['bearer', 'Authorization: Bearer <key>'], ['api-key', 'api-key: <key> (Azure)'], ['anthropic', 'x-api-key (Anthropic)'], ['anthropic-compat', 'x-api-key + Bearer'], ['goog', 'x-goog-api-key (Google)'], ['custom', 'Custom header…'], ['none', 'No authentication']]
+          .map(([v, l]) => h('option', { value: v, selected: p.auth === v }, l)));
+      const authHeader = h('input', { class: 'input mono', value: p.authHeader || '', placeholder: 'x-my-api-key' });
+      const authPrefix = h('input', { class: 'input mono', value: p.authPrefix || '', placeholder: 'e.g. "Api-Key " (optional)' });
+      const customAuth = h('div', { class: 'form-2' + (p.auth === 'custom' ? '' : ' hidden') }, field('Header name', authHeader), field('Value prefix', authPrefix));
+      auth.onchange = () => customAuth.classList.toggle('hidden', auth.value !== 'custom');
       content.replaceChildren(h('div', { class: 'form' },
         h('div', { class: 'form-2' }, field('Display name', nameIn), field('Prefix (id)', idIn, 'Models are addressed as "' + p.id + '/<model>".')),
         field('Base URL', urlIn),
+        h('div', { class: 'form-2' }, field('Tool calling', toolMode, 'Emulation lets models without function calling use tools (Claude Code, Codex, agents).'), field('Authentication', auth)),
+        customAuth,
         h('div', { class: 'form-2' }, field('Key rotation', rot), field('Response timeout (ms)', timeout, 'Time to wait for response headers.')),
         field('HTTP proxy', proxy),
         field('Extra headers (JSON)', headers)));
@@ -1066,12 +1083,15 @@ function editProvider(id, tab = 'general') {
         const r = await run(() => api('PUT', '/providers/' + encodeURIComponent(p.id), {
           id: idIn.value.trim(), name: nameIn.value.trim(), baseUrl: urlIn.value.trim(), rotation: rot.value,
           timeoutMs: Number(timeout.value) || 0, proxy: proxy.value.trim(), headers: hdrs,
+          toolMode: toolMode.value, auth: auth.value, authHeader: authHeader.value.trim(), authPrefix: authPrefix.value,
         }), 'Saved');
         await refresh();
         return r;
       };
     } else if (current === 'keys') {
       content.replaceChildren(keysPanel(p));
+    } else if (current === 'compat') {
+      content.replaceChildren(compatPanel(p.id));
     } else {
       content.replaceChildren(modelsPanel(p));
     }
@@ -1130,6 +1150,38 @@ function keysPanel(p) {
   return wrap;
 }
 
+/** Capabilities of a model from the model database (+ learned fixes): [context, maxOutput, tools 1/0/-1, vision, reasoning]. */
+function modelCaps(p, m) {
+  const c = (p.caps || {})[m];
+  const fix = (S.state.compat || {})[p.id + '::' + m];
+  const emulated = p.toolMode === 'emulate' || (fix && fix.emulateTools) || (c && c[2] === 0 && p.toolMode !== 'native');
+  return { c, emulated };
+}
+function fmtCtx(n) {
+  return n >= 1e6 ? (n / 1e6).toFixed(n % 1e6 ? 1 : 0) + 'M' : n >= 1000 ? Math.round(n / 1000) + 'k' : String(n);
+}
+function capsTag(p, m) {
+  const { c, emulated } = modelCaps(p, m);
+  const bits = [];
+  if (c && c[0]) bits.push(fmtCtx(c[0]));
+  if (emulated) bits.push('emulated tools');
+  if (c && c[3]) bits.push('vision');
+  if (c && c[4]) bits.push('reasoning');
+  return bits.length ? h('span', { class: 'muted tiny', style: { marginLeft: '2px' } }, bits.join(' · ')) : null;
+}
+function capsTitle(p, m) {
+  const { c, emulated } = modelCaps(p, m);
+  const lines = [];
+  if (c) {
+    if (c[0]) lines.push(`Context: ${fmt.n(c[0])} tokens`);
+    if (c[1]) lines.push(`Max output: ${fmt.n(c[1])} tokens`);
+    if (c[3]) lines.push('Vision input');
+    if (c[4]) lines.push('Reasoning');
+  }
+  lines.push(emulated ? 'Tool calling: emulated by Open Gravity' : c && c[2] === 1 ? 'Tool calling: native' : 'Tool calling: native, emulated automatically if refused');
+  return '\n' + lines.join('\n');
+}
+
 function modelsPanel(p) {
   let models = [...(providerById(p.id) || p).models];
   const wrap = h('div', { class: 'stack' });
@@ -1146,7 +1198,8 @@ function modelsPanel(p) {
     const q = filter.value.toLowerCase();
     const shown = models.filter((m) => !q || m.toLowerCase().includes(q));
     count.textContent = `${models.length} model${models.length === 1 ? '' : 's'}${q ? ` · ${shown.length} shown` : ''}`;
-    chips.replaceChildren(...(shown.length ? shown.slice(0, 400).map((m) => h('span', { class: 'chip', title: p.id + '/' + m }, m,
+    const live = providerById(p.id) || p;
+    chips.replaceChildren(...(shown.length ? shown.slice(0, 400).map((m) => h('span', { class: 'chip', title: p.id + '/' + m + capsTitle(live, m) }, m, capsTag(live, m),
       h('button', { 'aria-label': 'Test ' + m, title: 'Test this model', onclick: () => testProvider(p, null, m) }, icon('bolt')),
       h('button', { 'aria-label': 'Copy id', title: 'Copy "' + p.id + '/' + m + '"', onclick: () => copy(p.id + '/' + m) }, icon('copy')),
       h('button', { 'aria-label': 'Remove ' + m, title: 'Remove', onclick: () => save(models.filter((x) => x !== m)) }, icon('x')))) : [h('span', { class: 'muted' }, 'No models.')]));
@@ -1178,6 +1231,44 @@ function modelsPanel(p) {
   return wrap;
 }
 
+
+const STRATEGY_LABELS = { fallback: 'Fallback in order', 'round-robin': 'Round-robin', random: 'Random', fastest: 'Fastest first', cheapest: 'Cheapest first', race: 'Race' };
+
+/** Learned compatibility fixes (all, or for one provider) with reset buttons. */
+function compatPanel(providerId) {
+  const wrap = h('div', { class: 'stack', style: { gap: '8px' } });
+  const draw = () => {
+    const entries = Object.entries(S.state.compat || {}).filter(([k]) => !providerId || k.startsWith(providerId + '::'));
+    if (!entries.length) {
+      wrap.replaceChildren(h('div', { class: 'muted small' }, providerId
+        ? 'No fixes learned yet. When this provider rejects a request because of an unsupported feature, Open Gravity adapts the request, retries and remembers the fix here.'
+        : 'Nothing learned yet.'));
+      return;
+    }
+    wrap.replaceChildren(...entries.map(([k, fix]) => {
+      const tags = [
+        fix.emulateTools && 'emulated tools', fix.mergeSystem && 'system merged', fix.stripImages && 'no images', fix.noReasoning && 'no reasoning',
+        fix.noResponseFormat && 'no response_format', fix.noStreamOptions && 'no stream_options', fix.maxTokensField && fix.maxTokensField,
+        fix.maxTokensCap && `max ${fix.maxTokensCap} tokens`, ...(fix.dropParams || []).map((d) => `drop ${d}`),
+      ].filter(Boolean);
+      return h('div', { class: 'keyrow', style: { gridTemplateColumns: '1fr auto' } },
+        h('div', { style: { minWidth: 0 } },
+          h('div', { class: 'mono small strong' }, k.replace('::', '/')),
+          h('div', { class: 'row', style: { gap: '4px', marginTop: '4px' } }, tags.map((t) => badge(t, 'accent'))),
+          fix.reasons ? h('div', { class: 'muted tiny', style: { marginTop: '4px' } }, fix.reasons[fix.reasons.length - 1]) : null),
+        h('button', {
+          class: 'btn sm', onclick: async () => {
+            await run(() => api('DELETE', '/compat?key=' + encodeURIComponent(k)), 'Fix removed');
+            await loadState();
+            draw();
+          },
+        }, 'Reset'));
+    }));
+  };
+  draw();
+  return wrap;
+}
+
 // ---- Combos
 PAGES.combos = async (page) => {
   const st = S.state;
@@ -1192,7 +1283,7 @@ PAGES.combos = async (page) => {
   page.append(h('div', { class: 'stack' }, st.combos.map((c) => h('div', { class: 'card card-b', style: { opacity: c.enabled ? 1 : 0.6 } },
     h('div', { class: 'row' },
       h('span', { class: 'strong', style: { fontSize: '15px' } }, c.id), copyBtn(c.id, 'btn sm icon ghost', 'Copy model name'),
-      badge({ fallback: 'Fallback in order', 'round-robin': 'Round-robin', random: 'Random' }[c.strategy], 'accent'),
+      badge(STRATEGY_LABELS[c.strategy] || c.strategy, 'accent'),
       c.id === st.settings.defaultModel ? badge('default', 'good') : null,
       h('div', { class: 'spacer' }),
       sw(c.enabled, async (v) => { await run(() => api('PUT', '/combos/' + encodeURIComponent(c.id), { enabled: v })); refresh(); }),
@@ -1215,7 +1306,8 @@ function targetChip(t) {
   const combo = S.state.combos.find((c) => c.id === t);
   const missing = !p && !combo && !S.state.models.some((m) => m.id === t);
   return h('span', { class: 'chip', style: { paddingRight: '10px', borderColor: missing ? 'var(--critical)' : null }, title: missing ? 'Not routable: unknown provider or model' : t },
-    p ? h('span', { class: 'dot', style: { background: p.color } }) : null, t, p && !p.enabled ? h('span', { class: 'muted' }, ' (disabled)') : null);
+    p ? h('span', { class: 'dot', style: { background: p.color } }) : null, t, p && !p.enabled ? h('span', { class: 'muted' }, ' (disabled)') : null,
+    (S.state.latencies || {})[t] !== undefined ? h('span', { class: 'muted tiny', title: 'Average time to first token' }, ` ${fmt.ms(S.state.latencies[t])}`) : null);
 }
 
 async function testCombo(id) {
@@ -1236,7 +1328,10 @@ function editCombo(c) {
   const strat = h('select', { class: 'input' },
     h('option', { value: 'fallback', selected: !c || c.strategy === 'fallback' }, 'Fallback — try targets in order'),
     h('option', { value: 'round-robin', selected: c && c.strategy === 'round-robin' }, 'Round-robin — rotate the first target, fall back on errors'),
-    h('option', { value: 'random', selected: c && c.strategy === 'random' }, 'Random — shuffle each request, fall back on errors'));
+    h('option', { value: 'random', selected: c && c.strategy === 'random' }, 'Random — shuffle each request, fall back on errors'),
+    h('option', { value: 'fastest', selected: c && c.strategy === 'fastest' }, 'Fastest — lowest measured time to first token first'),
+    h('option', { value: 'cheapest', selected: c && c.strategy === 'cheapest' }, 'Cheapest — lowest estimated price first'),
+    h('option', { value: 'race', selected: c && c.strategy === 'race' }, 'Race — query the first two at once, fastest wins (uses more tokens)'));
   let targets = c ? [...c.targets] : [];
   const list = h('div', { class: 'stack', style: { gap: '6px' } });
   const draw = () => {
@@ -1505,11 +1600,19 @@ PAGES.requests = async (page) => {
 
 function reqRow(r) {
   const served = r.provider ? `${r.provider}/${r.model}` : '—';
+  // Adaptive retries are shown as "auto-fixed", not as failed tries.
+  const tries = r.attempts.length - (r.adapted ? r.adapted.length : 0);
+  const fixes = (r.adapted || []).filter((x) => !/emulated tools/.test(x));
   return h('tr', { class: 'click', onclick: () => requestDetail(r.id), tabindex: 0, onkeydown: (e) => { if (e.key === 'Enter') requestDetail(r.id); } },
     h('td', { class: 'muted', title: fmt.datetime(r.ts) }, fmt.time(r.ts)),
     h('td', null, badge(r.endpoint)),
     h('td', { class: 'mono ellipsis', style: { maxWidth: '200px' }, title: r.requestedModel }, r.requestedModel || '(default)'),
-    h('td', { class: 'mono ellipsis', style: { maxWidth: '240px' }, title: served }, served, r.attempts.length > 1 ? h('span', { class: 'badge warn', style: { marginLeft: '6px' } }, `${r.attempts.length} tries`) : null),
+    h('td', { style: { maxWidth: '340px' } }, h('div', { class: 'row nowrap', style: { gap: '6px' } },
+      h('span', { class: 'mono ellipsis', style: { minWidth: 0 }, title: served }, served),
+      tries > 1 ? h('span', { class: 'badge warn', style: { flexShrink: 0 } }, `${tries} tries`) : null,
+      r.emulatedTools ? h('span', { class: 'badge accent', style: { flexShrink: 0 }, title: 'Tool calls emulated for a model without native function calling' }, 'tools emulated') : null,
+      fixes.length ? h('span', { class: 'badge accent', style: { flexShrink: 0 }, title: fixes.join('\n') }, 'auto-fixed') : null,
+      r.cached ? h('span', { class: 'badge good', style: { flexShrink: 0 } }, 'cache') : null)),
     h('td', null, statusBadge(r.ok ? { kind: 'good', label: String(r.status) } : { kind: 'bad', label: String(r.status), detail: r.error })),
     h('td', { class: 'num' }, fmt.ms(r.latencyMs)),
     h('td', { class: 'num' }, `${fmt.n(r.input)} / ${fmt.n(r.output)}`, r.estimated ? h('span', { class: 'muted', title: 'estimated' }, '*') : ''),
@@ -1527,7 +1630,9 @@ async function requestDetail(id) {
       kv('Status', String(r.status)), r.error ? kv('Error', r.error) : null,
       kv('Latency', fmt.ms(r.latencyMs) + (r.ttftMs ? ` · first token ${fmt.ms(r.ttftMs)}` : '')),
       kv('Tokens', `${r.input} in · ${r.output} out${r.cacheRead ? ` · ${r.cacheRead} cached` : ''}${r.reasoning ? ` · ${r.reasoning} reasoning` : ''}${r.estimated ? ' (estimated)' : ''}`),
-      kv('Estimated cost', fmt.cost(r.cost)), r.client ? kv('Client', r.client) : null, r.apiKeyId ? kv('Router key', r.apiKeyId) : null)),
+      kv('Estimated cost', fmt.cost(r.cost)), r.client ? kv('Client', r.client) : null, r.apiKeyId ? kv('Router key', r.apiKeyId) : null,
+      r.emulatedTools ? kv('Tool calling', 'emulated (model without native function calling)') : null,
+      r.adapted ? kv('Automatic fixes', r.adapted.join(' · ')) : null, r.cached ? kv('Cache', 'served from the response cache') : null)),
     h('div', { class: 'section-title' }, 'Attempts'),
     h('div', { class: 'stack', style: { gap: '6px' } }, r.attempts.length ? r.attempts.map((a, i) => h('div', { class: 'keyrow', style: { gridTemplateColumns: 'auto 1fr auto' } },
       h('span', { class: 'muted' }, String(i + 1)),
@@ -1717,7 +1822,31 @@ PAGES.settings = async (page) => {
       .map(([k, v]) => h('tr', null, h('td', { class: 'muted', style: { width: '160px' } }, k), h('td', { class: 'mono' }, v))))),
   h('div', { class: 'muted small' }, 'Open Gravity is MIT-licensed. ', h('a', { href: 'https://github.com/limoonsdev/Open-Gravity', target: '_blank', rel: 'noopener noreferrer' }, 'GitHub ↗'))]);
 
-  page.append(h('div', { class: 'grid g2' }, h('div', { class: 'stack' }, server, security, network, backup), h('div', { class: 'stack' }, routing, logging, about)));
+  const adaptive = h('input', { type: 'checkbox', checked: cfg.adaptiveCompat });
+  const cacheTtl = num(cfg.cacheTtlSeconds || 0, { min: 0 });
+  const mdbAuto = h('input', { type: 'checkbox', checked: cfg.modelDbAutoUpdate });
+  const mdbInfo = h('span', { class: 'muted small' }, `${fmt.n(st.modelDb.models)} models from ${st.modelDb.providers} provider families · updated ${st.modelDb.updated || 'never'}`);
+  const mdbBtn = h('button', {
+    class: 'btn', onclick: async () => {
+      mdbBtn.disabled = true;
+      try {
+        const r = await run(() => api('POST', '/modeldb/update', {}), 'Model database updated');
+        mdbInfo.textContent = `${fmt.n(r.models)} models from ${r.providers} provider families · updated ${r.updated}`;
+      } finally { mdbBtn.disabled = false; }
+    },
+  }, icon('refresh'), 'Update now');
+  const compatSec = section('Compatibility & performance', null, [
+    h('label', { class: 'switch' }, adaptive, h('span', { class: 'track' }), h('span', null, 'Self-healing: when a provider rejects a request (unsupported tools, parameter, system role, images, output limit…), fix it, retry and remember the fix')),
+    field('Response cache (seconds, 0 = off)', cacheTtl, `Identical requests are answered from memory. ${st.cacheSize} cached.`),
+    h('div', { class: 'stack', style: { gap: '6px' } }, h('span', { class: 'small strong' }, 'Model database (context windows, tool support, prices)'), mdbInfo,
+      h('div', { class: 'row' }, mdbBtn, h('label', { class: 'switch' }, mdbAuto, h('span', { class: 'track' }), h('span', { class: 'small' }, 'Update weekly')))),
+    h('div', { class: 'stack', style: { gap: '6px' } }, h('span', { class: 'small strong' }, 'Learned fixes'), compatPanel(null)),
+  ], async () => {
+    await run(() => api('PUT', '/settings', { adaptiveCompat: adaptive.checked, cacheTtlSeconds: Number(cacheTtl.value) || 0, modelDbAutoUpdate: mdbAuto.checked }), 'Saved');
+    refresh();
+  });
+
+  page.append(h('div', { class: 'grid g2' }, h('div', { class: 'stack' }, server, compatSec, network), h('div', { class: 'stack' }, routing, security, logging, backup, about)));
 };
 
 // ---------------------------------------------------------------- boot

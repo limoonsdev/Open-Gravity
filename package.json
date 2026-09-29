@@ -1,6 +1,6 @@
 {
   "name": "open-gravity",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "Universal local AI router: one endpoint for OpenAI, Anthropic, Gemini, OpenRouter, Groq, DeepSeek, Ollama, Antigravity and more, with combos, fallback, key rotation, usage analytics and a built-in web panel. Ships as a single executable.",
   "main": "build/open-gravity.cjs",
   "bin": {

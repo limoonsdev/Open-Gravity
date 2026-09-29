@@ -9,6 +9,7 @@
 import type { AppConfig, ProviderConfig, ProviderKey, ComboConfig } from '../core/config';
 import { globToRegExp } from '../core/util';
 import { health } from './health';
+import { modelDb } from '../core/modeldb';
 
 export interface Candidate {
   provider: ProviderConfig;
@@ -21,6 +22,7 @@ export interface Candidate {
 export interface Resolution {
   candidates: Candidate[];
   combo?: string;
+  strategy?: ComboConfig['strategy'];
   via?: 'alias' | 'combo' | 'prefix' | 'model' | 'default';
   error?: string;
 }
@@ -35,8 +37,29 @@ function lookupAlias(cfg: AppConfig, name: string): string | undefined {
   return undefined;
 }
 
-function orderTargets(combo: ComboConfig): string[] {
+function targetProvider(cfg: AppConfig, target: string): ProviderConfig | undefined {
+  const slash = target.indexOf('/');
+  return slash > 0 ? cfg.providers.find((p) => p.id.toLowerCase() === target.slice(0, slash).toLowerCase()) : undefined;
+}
+
+function priceOf(cfg: AppConfig, target: string): number {
+  const p = targetProvider(cfg, target);
+  if (!p) return Infinity;
+  if (p.format === 'antigravity' || /127\.0\.0\.1|localhost/.test(p.baseUrl)) return 0;
+  const info = modelDb.lookup(p.type, target.slice(target.indexOf('/') + 1));
+  return info ? info.inputCost * 3 + info.outputCost : Infinity;
+}
+
+function orderTargets(cfg: AppConfig, combo: ComboConfig): string[] {
   const t = [...combo.targets];
+  if (combo.strategy === 'fastest') {
+    // Unmeasured targets go first once so every target gets a latency sample.
+    const score = (x: string) => health.latencyOf(x) ?? -1;
+    return t.map((x, i) => ({ x, i, s: score(x) })).sort((a, b) => a.s - b.s || a.i - b.i).map((o) => o.x);
+  }
+  if (combo.strategy === 'cheapest') {
+    return t.map((x, i) => ({ x, i, s: priceOf(cfg, x) })).sort((a, b) => a.s - b.s || a.i - b.i).map((o) => o.x);
+  }
   if (combo.strategy === 'round-robin' && t.length > 1) {
     const n = comboCounters.get(combo.id) || 0;
     comboCounters.set(combo.id, n + 1);
@@ -64,7 +87,7 @@ function expand(cfg: AppConfig, name: string, depth: number, via: { v?: Resoluti
   if (combo) {
     via.v = via.v || 'combo';
     via.combo ||= combo.id;
-    return orderTargets(combo).flatMap((t) => expand(cfg, t, depth + 1, via).map((c) => ({ ...c, combo: combo.id })));
+    return orderTargets(cfg, combo).flatMap((t) => expand(cfg, t, depth + 1, via).map((c) => ({ ...c, combo: combo.id })));
   }
 
   const slash = name.indexOf('/');
@@ -123,7 +146,8 @@ export function resolveModel(cfg: AppConfig, requested: string): Resolution {
         : 'No provider is configured yet. Open the Open Gravity dashboard and add a provider.',
     };
   }
-  return { candidates, combo: via.combo, via: via.v };
+  const strategy = via.combo ? cfg.combos.find((c) => c.id === via.combo)?.strategy : undefined;
+  return { candidates, combo: via.combo, via: via.v, strategy };
 }
 
 const KEYLESS: ProviderKey = { id: 'none', key: '', enabled: true };

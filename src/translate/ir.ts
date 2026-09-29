@@ -5,7 +5,7 @@
 // stream is decoded into IREvents. Encoders then turn IREvents back into the
 // wire format the client speaks. N formats => 2N translators instead of N².
 
-export type ApiFormat = 'openai' | 'anthropic' | 'gemini' | 'responses';
+export type ApiFormat = 'openai' | 'anthropic' | 'gemini' | 'responses' | 'ollama' | 'ollama-generate' | 'completions';
 
 export interface IRText { type: 'text'; text: string }
 export interface IRImage { type: 'image'; mediaType?: string; data?: string; url?: string }

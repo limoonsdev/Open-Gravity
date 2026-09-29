@@ -39,6 +39,9 @@ export interface UsageRecord {
   estimated?: boolean;
   attempts: Attempt[];
   client?: string;
+  emulatedTools?: boolean;
+  adapted?: string[];
+  cached?: boolean;
 }
 
 export interface CapturedBodies {

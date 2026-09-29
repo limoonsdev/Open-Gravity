@@ -4,6 +4,7 @@ import { spawn } from 'child_process';
 import { ConfigStore } from './core/config';
 import { UsageStore } from './core/usage';
 import { logger } from './core/logger';
+import { modelDbAge, updateModelDb } from './core/modeldb';
 import { createRouterServer, listen } from './server/server';
 import type { ServerInfo } from './server/admin';
 import type http from 'http';
@@ -69,6 +70,11 @@ export async function startApp(opts: { port?: number; host?: string; config?: Co
   const addr = server.address();
   if (addr && typeof addr === 'object') info.port = addr.port;
   config.watch();
+  if (config.settings.modelDbAutoUpdate && modelDbAge() > 7 * 86400e3 && !process.env.OG_OFFLINE) {
+    updateModelDb()
+      .then((info) => logger.info(`Model database updated: ${info.models} models`))
+      .catch((e) => logger.debug(`Model database update skipped: ${e.message}`));
+  }
 
   return {
     config,

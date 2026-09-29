@@ -14,6 +14,21 @@ export interface KeyHealth {
 class HealthTracker {
   private keys = new Map<string, KeyHealth>();
   private models = new Map<string, number>();
+  private latency = new Map<string, number>();
+
+  /** Exponentially weighted time-to-first-token per "provider/model" target. */
+  recordLatency(target: string, ms: number) {
+    const prev = this.latency.get(target);
+    this.latency.set(target, prev === undefined ? ms : prev * 0.7 + ms * 0.3);
+  }
+
+  latencyOf(target: string): number | undefined {
+    return this.latency.get(target);
+  }
+
+  latencies(): Record<string, number> {
+    return Object.fromEntries([...this.latency].map(([k, v]) => [k, Math.round(v)]));
+  }
 
   private k(provider: string, keyId: string) {
     return `${provider}:${keyId}`;

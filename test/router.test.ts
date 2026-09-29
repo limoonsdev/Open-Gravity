@@ -164,12 +164,13 @@ describe('Anthropic clients (Claude Code)', () => {
     assert.equal(res.status, 200);
     const evs = parseSSE(text);
     const types = evs.map((e) => e.event);
-    assert.deepEqual(types, ['message_start', 'content_block_start', 'content_block_delta', 'content_block_delta', 'content_block_stop', 'message_delta', 'message_stop']);
+    // Tool arguments are buffered, repaired and sent as one validated delta.
+    assert.deepEqual(types, ['message_start', 'content_block_start', 'content_block_delta', 'content_block_stop', 'message_delta', 'message_stop']);
     assert.equal(evs[1].data.content_block.type, 'tool_use');
     assert.equal(evs[1].data.content_block.name, 'get_weather');
-    assert.equal(evs[2].data.delta.partial_json + evs[3].data.delta.partial_json, '{"city":"Paris"}');
-    assert.equal(evs[5].data.delta.stop_reason, 'tool_use');
-    assert.equal(evs[5].data.usage.output_tokens, 7);
+    assert.equal(evs[2].data.delta.partial_json, '{"city":"Paris"}');
+    assert.equal(evs[4].data.delta.stop_reason, 'tool_use');
+    assert.equal(evs[4].data.usage.output_tokens, 7);
     // Tool definitions translated to OpenAI format
     assert.equal(lastReceived().body.tools[0].function.name, 'get_weather');
   });

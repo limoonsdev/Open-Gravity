@@ -29,6 +29,24 @@ function failFor(model: string): number | null {
   return m ? Number(m[1]) : null;
 }
 
+const textOf = (content: any) => (typeof content === 'string' ? content : Array.isArray(content) ? content.map((c: any) => c.text || '').join('') : '');
+
+/** Scripted replies for models without native tools: they follow the <tool_call> prompt protocol. */
+function scripted(model: string, body: any): string | null {
+  const msgs = body.messages || [];
+  const all = msgs.map((m: any) => textOf(m.content)).join('\n');
+  const lastUser = textOf([...msgs].reverse().find((m: any) => m.role === 'user')?.content);
+  if (model.includes('tagreason')) return '<think>Reasoning here.</think>The answer is 42.';
+  if (!model.includes('notools') && !model.includes('emu') && !model.includes('codegeex')) return null;
+  if (/<tool_response/.test(lastUser)) return 'It is sunny in Paris.';
+  if (/<tools>/.test(all)) {
+    return model.includes('xml')
+      ? 'Checking.\n<tool_call>\n<function=get_weather>\n<parameter=city>\nParis\n</parameter>\n</function>\n</tool_call>'
+      : 'Checking the weather.\n<tool_call>\n{"name": "get_weather", "arguments": {"city": "Paris"}}\n</tool_call>';
+  }
+  return 'Hello world';
+}
+
 function openai(res: http.ServerResponse, model: string, body: any) {
   const stream = body.stream;
   const id = 'chatcmpl-mock';
@@ -45,8 +63,15 @@ function openai(res: http.ServerResponse, model: string, body: any) {
     return;
   }
   chunk({ role: 'assistant', content: '' });
+  const script = scripted(model, body);
   if (model.includes('think')) chunk({ reasoning_content: 'Let me think.' });
-  if (model.includes('tool')) {
+  if (script !== null) {
+    for (let i = 0; i < script.length; i += 7) chunk({ content: script.slice(i, i + 7) });
+    chunk({}, 'stop');
+  } else if (model.includes('badargs')) {
+    chunk({ tool_calls: [{ index: 0, id: 'call_bad', type: 'function', function: { name: 'get_weather', arguments: '{"city": \'Paris\', "days": "3",' } }] });
+    chunk({}, 'tool_calls');
+  } else if (model.includes('tool')) {
     chunk({ tool_calls: [{ index: 0, id: 'call_abc', type: 'function', function: { name: 'get_weather', arguments: '' } }] });
     chunk({ tool_calls: [{ index: 0, function: { arguments: '{"city":' } }] });
     chunk({ tool_calls: [{ index: 0, function: { arguments: '"Paris"}' } }] });
@@ -173,7 +198,19 @@ export async function startMockUpstream(): Promise<MockUpstream> {
       res.end(JSON.stringify({ object: 'list', data: [{ object: 'embedding', index: 0, embedding: [0.1, 0.2] }], model }));
       return;
     }
-    if (url.pathname.endsWith('/chat/completions')) return openai(res, model, body);
+    if (url.pathname.endsWith('/chat/completions')) {
+      const fail = (status: number, payload: any) => {
+        res.writeHead(status, { 'content-type': 'application/json' });
+        res.end(JSON.stringify(payload));
+      };
+      const maxTok = body.max_tokens ?? body.max_completion_tokens ?? 0;
+      if (model.includes('notools') && body.tools) return fail(400, { error: { message: `registry.ollama.ai/library/${model} does not support tools` } });
+      if (model.includes('maxtok') && maxTok > 1000) return fail(400, { error: { message: `max_tokens is too large: ${maxTok}. This model supports at most 1000 completion tokens, whereas you provided ${maxTok}.` } });
+      if (model.includes('nosystem') && (body.messages || []).some((m: any) => m.role === 'system')) return fail(400, { error: { message: 'System role not supported' } });
+      if (model.includes('strict') && 'temperature' in body) return fail(422, { detail: [{ type: 'extra_forbidden', loc: ['body', 'temperature'], msg: 'Extra inputs are not permitted', input: body.temperature }] });
+      if (model.includes('slow')) await new Promise((r) => setTimeout(r, 600));
+      return openai(res, model, body);
+    }
     if (url.pathname.endsWith('/v1/messages')) return anthropic(res, model, body);
     if (url.pathname.includes(':streamGenerateContent')) return gemini(res, model);
     if (url.pathname.endsWith('/responses')) return responses(res, model, body);
