@@ -1,1 +1,0 @@
-{"version":3,"file":"models.js","sourceRoot":"","sources":["../../../src/cli/commands/models.ts"],"names":[],"mappings":";;AAEA,sCAKC;AAPD,sDAAkD;AAE3C,KAAK,UAAU,aAAa;IACjC,MAAM,QAAQ,GAAG,IAAI,8BAAa,CAAC,GAAG,EAAE;QACtC,OAAO,CAAC,IAAI,CAAC,CAAC,CAAC,CAAC;IAClB,CAAC,CAAC,CAAC;IACH,MAAM,QAAQ,CAAC,KAAK,EAAE,CAAC;AACzB,CAAC"}

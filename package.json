@@ -1,59 +1,63 @@
 {
   "name": "open-gravity",
-  "version": "1.0.0",
-  "description": "Universal local AI Proxy connecting Google Antigravity models to Claude Code, Codex, Aider, Cursor, and any AI agent.",
-  "main": "dist/index.js",
+  "version": "2.0.0",
+  "description": "Universal local AI router: one endpoint for OpenAI, Anthropic, Gemini, OpenRouter, Groq, DeepSeek, Ollama, Antigravity and more, with combos, fallback, key rotation, usage analytics and a built-in web panel. Ships as a single executable.",
+  "main": "build/open-gravity.cjs",
   "bin": {
-    "open-gravity": "./bin/gravity-bridge.js",
-    "opengravity": "./bin/gravity-bridge.js",
-    "og": "./bin/gravity-bridge.js"
+    "open-gravity": "bin/open-gravity.js",
+    "og": "bin/open-gravity.js"
+  },
+  "files": [
+    "bin",
+    "build/open-gravity.cjs",
+    "assets",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20.12"
   },
   "scripts": {
-    "build": "tsc && powershell -Command \"Copy-Item src\\web\\index.html -Destination dist\\web\\index.html -Force\"",
-    "bundle": "npm run build && npx @vercel/ncc build dist/index.js -o build",
-    "compile": "npm run bundle && node --experimental-sea-config sea-config.json && powershell -Command \"Copy-Item (Get-Command node).Source open-gravity.exe -Force\" && npx postject open-gravity.exe NODE_SEA_BLOB sea-prep.blob --sentinel-fuse NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2",
-    "start": "node dist/index.js start",
-    "claude": "node dist/index.js claude",
-    "status": "node dist/index.js status",
-    "models": "node dist/index.js models",
-    "doctor": "node dist/index.js doctor",
-    "configure": "node dist/index.js configure"
+    "dev": "tsx src/index.ts",
+    "build": "node scripts/build.mjs",
+    "start": "node scripts/build.mjs && node build/open-gravity.cjs",
+    "exe": "node scripts/build-exe.mjs",
+    "exe:win": "node scripts/build-exe.mjs --target win-x64",
+    "exe:all": "node scripts/build-exe.mjs --target win-x64,linux-x64,macos-arm64,macos-x64",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test test/*.test.ts",
+    "check": "npm run typecheck && npm test && npm run build"
   },
   "keywords": [
-    "open-gravity",
-    "antigravity",
+    "ai-router",
+    "llm-proxy",
+    "llm-gateway",
+    "openai-compatible",
+    "anthropic-compatible",
     "gemini",
     "claude-code",
     "codex",
-    "aider",
     "cursor",
-    "ai-proxy",
-    "openai-compatible",
-    "anthropic-compatible"
+    "openrouter",
+    "antigravity",
+    "fallback",
+    "load-balancing"
   ],
   "author": "Alexis",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/limoonsdev/Open-Gravity.git"
+  },
   "dependencies": {
-    "boxen": "^7.1.1",
-    "chalk": "^4.1.2",
-    "commander": "^12.1.0",
-    "cors": "^2.8.5",
-    "dotenv": "^16.4.7",
-    "express": "^4.21.2",
-    "node-fetch": "^2.7.0",
-    "open": "^8.4.2",
-    "ora": "^5.4.1",
-    "uuid": "^10.0.0"
+    "undici": "^6.21.3"
   },
   "devDependencies": {
-    "@types/cors": "^2.8.17",
-    "@types/express": "^4.17.21",
-    "@types/node": "^20.17.19",
-    "@types/node-fetch": "^2.6.12",
-    "@types/uuid": "^10.0.0",
-    "@vercel/ncc": "^0.45.0",
+    "@types/node": "^22.15.0",
+    "esbuild": "^0.25.5",
     "postject": "^1.0.0-alpha.6",
-    "ts-node": "^10.9.2",
-    "typescript": "^5.7.3"
+    "resedit": "^2.0.3",
+    "tsx": "^4.20.3",
+    "typescript": "^5.8.3"
   }
 }
