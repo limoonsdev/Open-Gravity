@@ -1,13 +1,52 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
   <defs>
-    <linearGradient id="og-g" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#8b5cf6"/>
-      <stop offset="1" stop-color="#22d3ee"/>
+    <linearGradient id="og-bg" x1="0.1" y1="0" x2="0.9" y2="1">
+      <stop offset="0" stop-color="#2a1d6b"/>
+      <stop offset="0.5" stop-color="#140f38"/>
+      <stop offset="1" stop-color="#070914"/>
     </linearGradient>
+    <linearGradient id="og-sheen" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.16"/>
+      <stop offset="0.45" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+    <radialGradient id="og-glow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#8b5cf6" stop-opacity="0.7"/>
+      <stop offset="0.6" stop-color="#6d28d9" stop-opacity="0.18"/>
+      <stop offset="1" stop-color="#6d28d9" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="og-core" cx="0.36" cy="0.3" r="0.78">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="0.22" stop-color="#ddd6fe"/>
+      <stop offset="0.55" stop-color="#8b5cf6"/>
+      <stop offset="0.85" stop-color="#4c1d95"/>
+      <stop offset="1" stop-color="#2e1065"/>
+    </radialGradient>
+    <linearGradient id="og-ring" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#22d3ee"/>
+      <stop offset="0.5" stop-color="#a78bfa"/>
+      <stop offset="1" stop-color="#f472b6"/>
+    </linearGradient>
+    <radialGradient id="og-sat" cx="0.35" cy="0.35" r="0.7">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="0.5" stop-color="#f9a8d4"/>
+      <stop offset="1" stop-color="#db2777"/>
+    </radialGradient>
+    <radialGradient id="og-satglow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#f472b6" stop-opacity="0.8"/>
+      <stop offset="1" stop-color="#f472b6" stop-opacity="0"/>
+    </radialGradient>
   </defs>
-  <rect width="64" height="64" rx="15" fill="#0d1120"/>
-  <ellipse cx="32" cy="32" rx="25" ry="9.5" fill="none" stroke="url(#og-g)" stroke-width="3" opacity=".45" transform="rotate(-28 32 32)"/>
-  <circle cx="32" cy="32" r="12.5" fill="url(#og-g)"/>
-  <path d="M7 32a25 9.5 0 0 0 50 0" fill="none" stroke="url(#og-g)" stroke-width="3" stroke-linecap="round" transform="rotate(-28 32 32)"/>
-  <circle cx="53.5" cy="21" r="3.6" fill="#f0abfc"/>
+  <rect x="24" y="24" width="976" height="976" rx="228" fill="url(#og-bg)"/>
+  <rect x="24" y="24" width="976" height="976" rx="228" fill="url(#og-sheen)"/>
+  <rect x="26" y="26" width="972" height="972" rx="226" fill="none" stroke="#ffffff" stroke-opacity="0.1" stroke-width="4"/>
+  <circle cx="512" cy="512" r="360" fill="url(#og-glow)"/>
+  <g transform="rotate(-24 512 512)">
+    <ellipse cx="512" cy="512" rx="370" ry="124" fill="none" stroke="url(#og-ring)" stroke-width="34" opacity="0.4"/>
+  </g>
+  <circle cx="512" cy="512" r="196" fill="url(#og-core)"/>
+  <g transform="rotate(-24 512 512)">
+    <path d="M142 512 A370 124 0 0 0 882 512" fill="none" stroke="url(#og-ring)" stroke-width="34"/>
+  </g>
+  <circle cx="847" cy="409" r="92" fill="url(#og-satglow)"/>
+  <circle cx="847" cy="409" r="44" fill="url(#og-sat)"/>
 </svg>

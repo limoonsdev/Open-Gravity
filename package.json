@@ -1,6 +1,6 @@
 {
   "name": "open-gravity",
-  "version": "2.1.0",
+  "version": "3.0.0",
   "description": "Universal local AI router: one endpoint for OpenAI, Anthropic, Gemini, OpenRouter, Groq, DeepSeek, Ollama, Antigravity and more, with combos, fallback, key rotation, usage analytics and a built-in web panel. Ships as a single executable.",
   "main": "build/open-gravity.cjs",
   "bin": {
@@ -27,7 +27,9 @@
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test test/*.test.ts",
     "check": "npm run typecheck && npm test && npm run build",
-    "smoke": "node scripts/smoke.mjs"
+    "smoke": "node scripts/smoke.mjs",
+    "build:ui": "npm run build -w dashboard",
+    "dev:ui": "npm run dev -w dashboard"
   },
   "keywords": [
     "ai-router",
@@ -61,5 +63,8 @@
     "rcedit": "^4.0.1",
     "tsx": "^4.20.3",
     "typescript": "^5.8.3"
-  }
+  },
+  "workspaces": [
+    "dashboard"
+  ]
 }

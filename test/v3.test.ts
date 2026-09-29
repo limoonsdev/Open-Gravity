@@ -19,6 +19,7 @@ import { parseRateLimitHeaders, parseReset, QuotaTracker, periodStart } from '..
 import { detectClient } from '../src/core/clients';
 import { analyze, project, toCsv, percentile } from '../src/core/analytics';
 import { parseOpenRouterFree, buildFreeCombo, freeInfoFor } from '../src/providers/free';
+import { detectLocalEngines, localCandidates } from '../src/providers/local';
 
 logger.quiet = true;
 
@@ -295,5 +296,67 @@ describe('Balances', () => {
     assert.equal(ds.json[0].remaining, 7.25);
     const none = await admin('POST', '/providers/a/balance', {});
     assert.equal(none.json[0].ok, false);
+  });
+});
+
+describe('Local engines', () => {
+  test('candidates cover the common local servers once per URL', () => {
+    const c = localCandidates();
+    const urls = c.map((x) => x.baseUrl);
+    assert.equal(new Set(urls).size, urls.length);
+    for (const t of ['ollama', 'lmstudio', 'llamacpp', 'vllm', 'jan']) assert.ok(c.some((x) => x.type === t), t);
+  });
+  test('detects a server answering /models and ignores dead ports and other routers', async () => {
+    const found = await detectLocalEngines({
+      timeoutMs: 1500,
+      candidates: [
+        { type: 'lmstudio', name: 'LM Studio', baseUrl: `${mock.url}/v1` },
+        { type: 'jan', name: 'Jan', baseUrl: 'http://127.0.0.1:9/v1' },
+        { type: 'ollama', name: 'Ollama', baseUrl: `${base}/v1` },
+      ],
+    });
+    assert.equal(found.length, 1);
+    assert.equal(found[0].type, 'lmstudio');
+    assert.ok(found[0].models.length > 0);
+  });
+  test('admin: /local/detect answers quickly', async () => {
+    const r = await admin('GET', '/local/detect');
+    assert.equal(r.res.status, 200);
+    assert.ok(Array.isArray(r.json));
+  });
+});
+
+describe('Dashboard serving', () => {
+  test('/ and /dashboard redirect to the Next.js app under /ui/', async () => {
+    for (const p of ['/', '/dashboard', '/ui']) {
+      const res = await fetch(base + p, { redirect: 'manual' });
+      assert.equal(res.status, 302, p);
+      assert.equal(res.headers.get('location'), '/ui/');
+    }
+  });
+  test('pages, static assets, caching and 404', async () => {
+    const page = await fetch(base + '/ui/');
+    if (page.status === 503) return; // dashboard not built (npm run build:ui)
+    assert.equal(page.status, 200);
+    assert.match(page.headers.get('content-type') || '', /html/);
+    assert.match(page.headers.get('content-security-policy') || '', /frame-ancestors 'none'/);
+    const html = await page.text();
+    const asset = /\/ui\/_next\/static\/[^"']+\.js/.exec(html)?.[0];
+    assert.ok(asset, 'page references its scripts');
+    const js = await fetch(base + asset!, { headers: { 'accept-encoding': 'br' } });
+    assert.equal(js.status, 200);
+    assert.match(js.headers.get('cache-control') || '', /immutable/);
+    const etag = js.headers.get('etag')!;
+    const again = await fetch(base + asset!, { headers: { 'if-none-match': etag } });
+    assert.equal(again.status, 304);
+    for (const p of ['/ui/analytics/', '/ui/welcome/', '/ui/settings/']) assert.equal((await fetch(base + p)).status, 200, p);
+    const missing = await fetch(base + '/ui/does-not-exist/');
+    assert.equal(missing.status, 404);
+    assert.match(await missing.text(), /<html/i);
+    assert.equal((await fetch(base + '/ui/logos/openai.svg')).headers.get('content-type'), 'image/svg+xml');
+  });
+  test('responses identify the router', async () => {
+    const res = await fetch(base + '/health');
+    assert.equal(res.headers.get('x-og-router'), 'open-gravity');
   });
 });

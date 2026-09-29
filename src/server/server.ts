@@ -9,7 +9,7 @@ import { routeApi, isApiPath, normalizeApiPath } from './api';
 import { routeAdmin, ServerInfo } from './admin';
 import { json, text, HttpError } from './http';
 import { authorizeApi, hostAllowed, hasValidSession, dashboardAccess } from './security';
-import { panelHtml, logoSvg } from './assets';
+import { uiAsset, uiNotFound, hasUi, decompress, logoSvg, type UiAsset } from './assets';
 
 export interface RouterServer {
   server: http.Server;
@@ -30,8 +30,29 @@ const SECURITY_HEADERS = {
   'x-content-type-options': 'nosniff',
   'x-frame-options': 'DENY',
   'referrer-policy': 'no-referrer',
-  'content-security-policy': "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'",
+  // ipc: / ipc.localhost are the desktop app's (Tauri) IPC channels.
+  'content-security-policy': "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost; frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
 };
+
+function sendAsset(req: IncomingMessage, res: ServerResponse, a: UiAsset, status = 200) {
+  const headers: Record<string, string> = {
+    'content-type': a.type,
+    etag: a.etag,
+    'cache-control': a.immutable ? 'public, max-age=31536000, immutable' : a.type.startsWith('text/html') ? 'no-cache' : 'public, max-age=3600',
+    vary: 'accept-encoding',
+    ...(a.type.startsWith('text/html') ? SECURITY_HEADERS : { 'x-content-type-options': 'nosniff' }),
+  };
+  if (status === 200 && req.headers['if-none-match'] === a.etag) {
+    res.writeHead(304, headers);
+    return res.end();
+  }
+  const acceptsBr = /\bbr\b/.test(String(req.headers['accept-encoding'] || ''));
+  const body = a.br && !acceptsBr ? decompress(a) : a.body;
+  if (a.br && acceptsBr) headers['content-encoding'] = 'br';
+  headers['content-length'] = String(body.length);
+  res.writeHead(status, headers);
+  res.end(req.method === 'HEAD' ? undefined : body);
+}
 
 export function createRouterServer(deps: { config: ConfigStore; usage: UsageStore }, info: ServerInfo): http.Server {
   const handler = async (req: IncomingMessage, res: ServerResponse) => {
@@ -43,6 +64,8 @@ export function createRouterServer(deps: { config: ConfigStore; usage: UsageStor
       return text(res, 400, 'Bad request');
     }
     const path = url.pathname;
+    // Lets tools (and other Open Gravity instances probing local engines) recognise the router.
+    res.setHeader('x-og-router', 'open-gravity');
 
     try {
       if (!hostAllowed(req, cfg)) {
@@ -80,12 +103,21 @@ export function createRouterServer(deps: { config: ConfigStore; usage: UsageStor
         return;
       }
 
-      if (req.method === 'GET' && (path === '/' || path === '/dashboard' || path.startsWith('/ui'))) {
+      if ((req.method === 'GET' || req.method === 'HEAD') && (path === '/ui' || path.startsWith('/ui/') || path === '/' || path === '/dashboard')) {
         const access = dashboardAccess(req, cfg);
         if (!access.allowed && !access.needsLogin) {
-          return text(res, 403, `<!doctype html><meta charset="utf-8"><title>Open Gravity</title><body style="font-family:system-ui;padding:40px;background:#0b0f19;color:#e5e7eb"><h2>Dashboard locked</h2><p>${access.reason}</p></body>`, 'text/html; charset=utf-8', SECURITY_HEADERS);
+          return text(res, 403, `<!doctype html><meta charset="utf-8"><title>Open Gravity</title><body style="font-family:system-ui;padding:40px;background:#090a13;color:#e5e7eb"><h2>Dashboard locked</h2><p>${access.reason}</p></body>`, 'text/html; charset=utf-8', SECURITY_HEADERS);
         }
-        return text(res, 200, panelHtml(), 'text/html; charset=utf-8', { ...SECURITY_HEADERS, 'cache-control': 'no-store' });
+        if (path === '/' || path === '/dashboard' || path === '/ui') {
+          res.writeHead(302, { location: `/ui/${url.search}`, 'cache-control': 'no-store' });
+          return res.end();
+        }
+        const asset = uiAsset(path);
+        if (asset) return sendAsset(req, res, asset);
+        const nf = uiNotFound();
+        if (nf) return sendAsset(req, res, nf, 404);
+        if (!hasUi()) return text(res, 503, 'The dashboard was not built. Run "npm run build:ui".', 'text/plain; charset=utf-8');
+        return text(res, 404, 'Not found');
       }
       if (req.method === 'GET' && (path === '/logo.svg' || path === '/favicon.svg' || path === '/favicon.ico')) {
         return text(res, 200, logoSvg(), 'image/svg+xml', { 'cache-control': 'public, max-age=86400' });

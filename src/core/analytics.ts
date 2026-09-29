@@ -237,7 +237,7 @@ export function analyze(records: readonly UsageRecord[], range: AnalyticsRange =
 
     const routed = r.ok && r.provider;
     bump(byModel, routed ? `${r.provider}/${r.model}` : r.requestedModel || '(none)', routed ? `${r.provider}/${r.model}` : r.requestedModel || '(none)', r);
-    bump(byProvider, r.provider || '(unrouted)', r.provider || '(unrouted)', r);
+    bump(byProvider, r.provider || '(unrouted)', r.provider || 'Not routed', r);
     if (r.provider && r.keyId) bump(byKey, `${r.provider}:${r.keyId}`, `${r.provider}:${r.keyId}`, r);
     const client = clientOf(r);
     bump(byClient, client.id, client.name, r);

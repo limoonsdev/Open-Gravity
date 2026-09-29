@@ -8,6 +8,7 @@ import { hashPassword, verifyPassword, maskKey, randomId, randomKey, slugify, VE
 import type { Range } from '../core/usage';
 import { CATALOG, getTemplate } from '../providers/catalog';
 import { FREE_INFO, freeInfoFor, openRouterFreeModels, buildFreeCombo } from '../providers/free';
+import { detectLocalEngines } from '../providers/local';
 import { modelDb, updateModelDb } from '../core/modeldb';
 import { responseCache } from '../router/cache';
 import { fetchProviderModels } from '../providers/upstream';
@@ -216,6 +217,15 @@ export async function routeAdmin(req: IncomingMessage, res: ServerResponse, url:
     return json(res, 200, combo);
   }
 
+  // ---- local engines running on this computer
+  if (path === '/local/detect' && method === 'GET') {
+    const engines = await detectLocalEngines({ excludePort: info.port });
+    return json(res, 200, engines.map((e) => ({
+      ...e,
+      configured: cfg.providers.some((p) => p.type === e.type || p.baseUrl.replace(/\/+$/, '') === e.baseUrl.replace(/\/+$/, '')),
+    })));
+  }
+
   // ---- providers
   if (path === '/providers' && method === 'POST') {
     const tpl = getTemplate(String(body.type || ''));
@@ -350,7 +360,7 @@ export async function routeAdmin(req: IncomingMessage, res: ServerResponse, url:
     validateComboId(cfg, id);
     const combo: ComboConfig = {
       id, description: body.description || '', targets: (body.targets || []).filter(Boolean),
-      strategy: ['fallback', 'round-robin', 'random'].includes(body.strategy) ? body.strategy : 'fallback', enabled: true,
+      strategy: ['fallback', 'round-robin', 'random', 'fastest', 'cheapest', 'race'].includes(body.strategy) ? body.strategy : 'fallback', enabled: true,
     };
     store.update((c) => c.combos.push(combo));
     return json(res, 201, { ok: true });
@@ -371,7 +381,7 @@ export async function routeAdmin(req: IncomingMessage, res: ServerResponse, url:
       store.update((c) => {
         const cur = c.combos.find((x) => x.id === id)!;
         if (body.targets !== undefined) cur.targets = (body.targets as string[]).filter(Boolean);
-        if (body.strategy !== undefined) cur.strategy = body.strategy;
+        if (['fallback', 'round-robin', 'random', 'fastest', 'cheapest', 'race'].includes(body.strategy)) cur.strategy = body.strategy;
         if (body.description !== undefined) cur.description = body.description;
         if (body.enabled !== undefined) cur.enabled = !!body.enabled;
         if (newId !== id) {
@@ -445,6 +455,7 @@ export async function routeAdmin(req: IncomingMessage, res: ServerResponse, url:
     const keyLabel = new Map<string, string>();
     for (const p of cfg.providers) p.keys.forEach((k, i) => keyLabel.set(`${p.id}:${k.id}`, `${p.name} · ${k.label || `key ${i + 1}`} (${maskKey(k.key)})`));
     for (const g of report.byKey) g.label = keyLabel.get(g.key) || g.key;
+    for (const g of report.byProvider) g.label = cfg.providers.find((p) => p.id === g.key)?.name || g.label;
     const routerKey = new Map(cfg.apiKeys.map((k) => [k.id, k.name]));
     for (const g of report.byApiKey) g.label = g.key === '(local)' ? 'No key (local)' : routerKey.get(g.key) || g.key;
     const monthAgo = Date.now() - 40 * 86400e3;
@@ -464,6 +475,7 @@ export async function routeAdmin(req: IncomingMessage, res: ServerResponse, url:
     return json(res, 200, {
       snapshots: quota.snapshots().map((s) => ({ ...s, providerName: provName.get(s.provider) || s.provider, keyLabel: keyName.get(`${s.provider}:${s.keyId}`) || (s.keyId === 'none' ? 'no key' : s.keyId) })),
       limits: quota.status(),
+      rules: cfg.limits,
       alerts: quota.alerts,
       balanceProviders: cfg.providers.filter((p) => supportsBalance(p) && p.keys.length).map((p) => p.id),
     });

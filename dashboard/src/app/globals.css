@@ -1,0 +1,310 @@
+@import 'tailwindcss';
+@import './fonts.css';
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* Theme tokens: every colour is a role, swapped per theme below. */
+@theme inline {
+  --font-sans: 'Inter Variable', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'JetBrains Mono Variable', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  --color-bg: var(--og-bg);
+  --color-surface: var(--og-surface);
+  --color-surface-2: var(--og-surface-2);
+  --color-surface-3: var(--og-surface-3);
+  --color-line: var(--og-line);
+  --color-line-strong: var(--og-line-strong);
+  --color-fg: var(--og-fg);
+  --color-fg-2: var(--og-fg-2);
+  --color-fg-3: var(--og-fg-3);
+  --color-accent: var(--og-accent);
+  --color-accent-2: var(--og-accent-2);
+  --color-accent-fg: var(--og-accent-fg);
+  --color-accent-soft: var(--og-accent-soft);
+  --color-good: var(--og-good);
+  --color-good-soft: var(--og-good-soft);
+  --color-warn: var(--og-warn);
+  --color-warn-soft: var(--og-warn-soft);
+  --color-bad: var(--og-bad);
+  --color-bad-soft: var(--og-bad-soft);
+  --color-info: var(--og-info);
+  --color-info-soft: var(--og-info-soft);
+}
+
+:root {
+  color-scheme: light;
+  --og-bg: #f4f5f9;
+  --og-surface: #ffffff;
+  --og-surface-2: #f5f6fa;
+  --og-surface-3: #eceef4;
+  --og-line: rgb(16 18 38 / 0.08);
+  --og-line-strong: rgb(16 18 38 / 0.16);
+  --og-fg: #0f1124;
+  --og-fg-2: #4a4e66;
+  --og-fg-3: #7f839b;
+  --og-accent: #7c3aed;
+  --og-accent-2: #0891b2;
+  --og-accent-fg: #ffffff;
+  --og-accent-soft: rgb(124 58 237 / 0.1);
+  --og-good: #0b8a0b;
+  --og-good-soft: rgb(12 163 12 / 0.1);
+  --og-warn: #b76e00;
+  --og-warn-soft: rgb(250 178 25 / 0.16);
+  --og-bad: #c93434;
+  --og-bad-soft: rgb(208 59 59 / 0.1);
+  --og-info: #2a78d6;
+  --og-info-soft: rgb(42 120 214 / 0.1);
+  --og-shadow: 0 1px 2px rgb(16 18 38 / 0.04), 0 4px 16px rgb(16 18 38 / 0.04);
+  --og-glow: radial-gradient(900px 420px at 12% -10%, rgb(124 58 237 / 0.07), transparent 60%), radial-gradient(700px 380px at 100% 0%, rgb(8 145 178 / 0.06), transparent 60%);
+
+  /* Chart palette (validated: categorical order, light surface #ffffff). */
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+  --series-3: #1baf7a;
+  --series-4: #eda100;
+  --series-5: #e87ba4;
+  --series-6: #008300;
+  --series-7: #4a3aa7;
+  --series-8: #e34948;
+  --status-good: #0ca30c;
+  --status-warning: #fab219;
+  --status-serious: #ec835a;
+  --status-critical: #d03b3b;
+  --seq-0: #eef4fd;
+  --seq-1: #cde2fb;
+  --seq-2: #9ec5f4;
+  --seq-3: #6da7ec;
+  --seq-4: #3987e5;
+  --seq-5: #256abf;
+  --seq-6: #184f95;
+  --grid: rgb(16 18 38 / 0.07);
+}
+
+.dark {
+  color-scheme: dark;
+  --og-bg: #090a13;
+  --og-surface: #11131f;
+  --og-surface-2: #171a28;
+  --og-surface-3: #1e2233;
+  --og-line: rgb(255 255 255 / 0.07);
+  --og-line-strong: rgb(255 255 255 / 0.14);
+  --og-fg: #eceef8;
+  --og-fg-2: #a6aac2;
+  --og-fg-3: #6f7391;
+  --og-accent: #8b5cf6;
+  --og-accent-2: #22d3ee;
+  --og-accent-fg: #ffffff;
+  --og-accent-soft: rgb(139 92 246 / 0.16);
+  --og-good: #3ecf5f;
+  --og-good-soft: rgb(12 163 12 / 0.18);
+  --og-warn: #fab219;
+  --og-warn-soft: rgb(250 178 25 / 0.14);
+  --og-bad: #f06a6a;
+  --og-bad-soft: rgb(208 59 59 / 0.18);
+  --og-info: #5b9df0;
+  --og-info-soft: rgb(57 135 229 / 0.16);
+  --og-shadow: 0 1px 2px rgb(0 0 0 / 0.3), 0 8px 24px rgb(0 0 0 / 0.25);
+  --og-glow: radial-gradient(900px 480px at 10% -12%, rgb(139 92 246 / 0.16), transparent 60%), radial-gradient(760px 420px at 105% -5%, rgb(34 211 238 / 0.08), transparent 60%);
+
+  /* Chart palette (validated: dark surface #11131f). */
+  --series-1: #3987e5;
+  --series-2: #d95926;
+  --series-3: #199e70;
+  --series-4: #c98500;
+  --series-5: #d55181;
+  --series-6: #008300;
+  --series-7: #9085e9;
+  --series-8: #e66767;
+  --seq-0: #161b2e;
+  --seq-1: #104281;
+  --seq-2: #184f95;
+  --seq-3: #1c5cab;
+  --seq-4: #2a78d6;
+  --seq-5: #5598e7;
+  --seq-6: #9ec5f4;
+  --grid: rgb(255 255 255 / 0.06);
+}
+
+@layer base {
+  html,
+  body {
+    background: var(--og-bg);
+    color: var(--og-fg);
+    font-family: var(--font-sans);
+    font-feature-settings: 'cv11', 'ss01';
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  ::selection {
+    background: var(--og-accent-soft);
+  }
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--og-line-strong) transparent;
+  }
+  :focus-visible {
+    outline: 2px solid var(--og-accent);
+    outline-offset: 2px;
+  }
+  code,
+  kbd,
+  pre,
+  .font-mono {
+    font-family: var(--font-mono);
+    font-feature-settings: normal;
+  }
+  button:not(:disabled),
+  [role='button']:not([aria-disabled='true']) {
+    cursor: pointer;
+  }
+}
+
+@layer components {
+  .og-glow {
+    background-image: var(--og-glow);
+  }
+  .card {
+    background: var(--og-surface);
+    border: 1px solid var(--og-line);
+    border-radius: 1.125rem;
+    box-shadow: var(--og-shadow);
+  }
+  .card-hover {
+    transition: border-color 0.15s, transform 0.15s, box-shadow 0.15s;
+  }
+  .card-hover:hover {
+    border-color: var(--og-line-strong);
+  }
+  .input {
+    width: 100%;
+    height: 2.375rem;
+    border-radius: 0.75rem;
+    border: 1px solid var(--og-line-strong);
+    background: var(--og-surface-2);
+    padding: 0 0.8rem;
+    font-size: 0.875rem;
+    color: var(--og-fg);
+    transition: border-color 0.12s, box-shadow 0.12s;
+  }
+  textarea.input {
+    height: auto;
+    padding: 0.6rem 0.8rem;
+    line-height: 1.5;
+  }
+  select.input {
+    padding-right: 2rem;
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2.5' stroke-linecap='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 0.7rem center;
+  }
+  .input::placeholder {
+    color: var(--og-fg-3);
+  }
+  .input:focus {
+    outline: none;
+    border-color: var(--og-accent);
+    box-shadow: 0 0 0 3px var(--og-accent-soft);
+  }
+  .label {
+    font-size: 0.8125rem;
+    font-weight: 560;
+    color: var(--og-fg);
+  }
+  .hint {
+    font-size: 0.75rem;
+    color: var(--og-fg-3);
+  }
+  .kbd {
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    padding: 0.1rem 0.35rem;
+    border-radius: 0.375rem;
+    border: 1px solid var(--og-line-strong);
+    background: var(--og-surface-2);
+    color: var(--og-fg-2);
+  }
+  .skeleton {
+    background: linear-gradient(90deg, var(--og-surface-2), var(--og-surface-3), var(--og-surface-2));
+    background-size: 200% 100%;
+    animation: og-shimmer 1.4s ease-in-out infinite;
+    border-radius: 0.5rem;
+  }
+  .og-hero {
+    background-color: var(--og-bg);
+    background-image:
+      radial-gradient(1100px 560px at 50% -12%, rgb(139 92 246 / 0.22), transparent 62%),
+      radial-gradient(700px 420px at 100% 30%, rgb(34 211 238 / 0.09), transparent 60%),
+      radial-gradient(640px 420px at 0% 80%, rgb(244 114 182 / 0.07), transparent 60%);
+    background-attachment: fixed;
+  }
+  .brand-gradient {
+    background: linear-gradient(120deg, #22d3ee 0%, #a78bfa 48%, #f472b6 100%);
+  }
+  .brand-text {
+    background: linear-gradient(120deg, #22d3ee 0%, #a78bfa 45%, #f472b6 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  .logo-mask {
+    background-color: currentColor;
+    -webkit-mask-repeat: no-repeat;
+    mask-repeat: no-repeat;
+    -webkit-mask-position: center;
+    mask-position: center;
+    -webkit-mask-size: contain;
+    mask-size: contain;
+  }
+}
+
+@keyframes og-shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+@keyframes og-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes og-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes og-orbit {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.animate-in {
+  animation: og-in 0.22s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+.animate-fade {
+  animation: og-fade 0.2s ease both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
