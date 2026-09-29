@@ -3,26 +3,13 @@
 import type { IRRequest, IREvent, IRResponse, IRStop, IRUsage, StreamEncoder } from './ir';
 import { genId } from './ir';
 import { sseData } from './sse';
+import { fimRequest } from './fim';
 
+/** Text completion: native completion endpoint when the provider has one, chat otherwise (see fim.ts). */
 export function parseCompletionsRequest(body: any): IRRequest {
-  let prompt = Array.isArray(body.prompt) ? body.prompt.join('\n') : String(body.prompt ?? '');
-  let system: string | undefined = 'Continue the text exactly where it stops. Output only the continuation.';
-  if (body.suffix) {
-    system = 'Fill in the missing text between PREFIX and SUFFIX. Output only the missing text, nothing else.';
-    prompt = `PREFIX:\n${prompt}\n\nSUFFIX:\n${body.suffix}`;
-  }
-  return {
-    model: body.model || '',
-    system,
-    messages: [{ role: 'user', parts: [{ type: 'text', text: prompt }] }],
-    maxTokens: body.max_tokens ?? undefined,
-    temperature: body.temperature ?? undefined,
-    topP: body.top_p ?? undefined,
-    stop: typeof body.stop === 'string' ? [body.stop] : Array.isArray(body.stop) ? body.stop : undefined,
-    stream: !!body.stream,
-    includeUsage: !!body.stream_options?.include_usage,
-    user: body.user,
-  };
+  const prompt = Array.isArray(body.prompt) ? body.prompt.join('\n') : String(body.prompt ?? '');
+  const suffix = typeof body.suffix === 'string' ? body.suffix : '';
+  return { ...fimRequest(body, prompt, suffix, suffix ? 'infill' : 'complete'), user: body.user };
 }
 
 const FINISH: Record<IRStop, string> = { end_turn: 'stop', stop_sequence: 'stop', tool_use: 'stop', max_tokens: 'length', content_filter: 'content_filter', error: 'stop' };

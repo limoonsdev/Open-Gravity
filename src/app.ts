@@ -6,6 +6,8 @@ import { UsageStore } from './core/usage';
 import { logger } from './core/logger';
 import { modelDbAge, updateModelDb } from './core/modeldb';
 import { createRouterServer, listen } from './server/server';
+import { quota } from './router/quota';
+import { setSelfUrl } from './router/internal';
 import type { ServerInfo } from './server/admin';
 import type http from 'http';
 
@@ -64,11 +66,26 @@ export async function startApp(opts: { port?: number; host?: string; config?: Co
     logger.warn(`Port ${original} is busy, using ${port} instead.`);
   }
 
+  // Limit rules: rebuild counters from history, then count each new request.
+  let limitsSig = JSON.stringify(config.get().limits);
+  quota.setRules(config.get().limits, usage.all());
+  const onRecord = (r: any) => quota.add(r);
+  usage.on('record', onRecord);
+  const onConfig = (c: any) => {
+    const sig = JSON.stringify(c.limits);
+    if (sig !== limitsSig) {
+      limitsSig = sig;
+      quota.setRules(c.limits, usage.all());
+    }
+  };
+  config.on('change', onConfig);
+
   const info: ServerInfo = { port, host, startedAt: Date.now() };
   const server = createRouterServer({ config, usage }, info);
   await listen(server, port, host);
   const addr = server.address();
   if (addr && typeof addr === 'object') info.port = addr.port;
+  setSelfUrl(baseUrlFor(host, info.port));
   config.watch();
   if (config.settings.modelDbAutoUpdate && modelDbAge() > 7 * 86400e3 && !process.env.OG_OFFLINE) {
     updateModelDb()
@@ -83,6 +100,8 @@ export async function startApp(opts: { port?: number; host?: string; config?: Co
     info,
     baseUrl: baseUrlFor(host, info.port),
     stop: () => new Promise<void>((resolve) => {
+      usage.off('record', onRecord);
+      config.off('change', onConfig);
       config.unwatch();
       config.saveNow();
       server.closeAllConnections?.();

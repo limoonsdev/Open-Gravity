@@ -7,6 +7,7 @@ import { logger } from '../core/logger';
 import { hashPassword, verifyPassword, maskKey, randomId, randomKey, slugify, VERSION, dataDir, isLoopback } from '../core/util';
 import type { Range } from '../core/usage';
 import { CATALOG, getTemplate } from '../providers/catalog';
+import { FREE_INFO, freeInfoFor, openRouterFreeModels, buildFreeCombo } from '../providers/free';
 import { modelDb, updateModelDb } from '../core/modeldb';
 import { responseCache } from '../router/cache';
 import { fetchProviderModels } from '../providers/upstream';
@@ -16,7 +17,15 @@ import { probeProvider } from '../router/probe';
 import { listRoutableModels, effectiveDefault, resolveModel } from '../router/resolve';
 import { handleInference, Deps } from '../router/executor';
 import { listTools, applyTool, restoreTool, ToolContext } from '../integrations/tools';
-import { json, readJson, HttpError, clientIp } from './http';
+import { json, readJson, HttpError, clientIp, text } from './http';
+import { analyze, project, toCsv, RANGE_MS, AnalyticsRange } from '../core/analytics';
+import { quota } from '../router/quota';
+import { normalizeLimit, normalizeTokenSaver } from '../core/config';
+import { fetchBalance, supportsBalance } from '../providers/balance';
+import { simulate, requestTokens } from '../router/tokensaver';
+import { parseClientRequest } from '../translate';
+import type { ApiFormat } from '../translate';
+import { TOKEN_SAVER_PRESETS } from '../core/config';
 import { createSession, sessionCookie, clearSessionCookie, dashboardAccess, isSameOrigin } from './security';
 
 export interface ServerInfo {
@@ -76,7 +85,7 @@ function stateView(cfg: AppConfig, deps: Deps, info: ServerInfo) {
     aliases: cfg.aliases,
     apiKeys: cfg.apiKeys.map((k) => ({ ...k, masked: maskKey(k.key) })),
     catalog: CATALOG.map(({ type, name, format, baseUrl, category, description, keyUrl, keyOptional, freeTier, models, color, vars, toolMode }) => ({
-      type, name, format, baseUrl, category, description, keyUrl, keyOptional, freeTier, models, color, vars, toolMode,
+      type, name, format, baseUrl, category, description, keyUrl, keyOptional, freeTier, models, color, vars, toolMode, free: freeInfoFor(type),
     })),
     models: listRoutableModels(cfg),
     compat: cfg.compat,
@@ -156,9 +165,10 @@ export async function routeAdmin(req: IncomingMessage, res: ServerResponse, url:
   if (path === '/settings' && method === 'PUT') {
     const allowed = ['port', 'host', 'defaultModel', 'unknownModelFallback', 'requireApiKey', 'openBrowser', 'headersTimeoutMs', 'idleTimeoutMs',
       'maxAttempts', 'cooldownRateLimitMs', 'cooldownAuthMs', 'cooldownServerMs', 'logRetentionDays', 'captureBodies', 'upstreamProxy', 'passthrough',
-      'adaptiveCompat', 'cacheTtlSeconds', 'modelDbAutoUpdate'] as const;
+      'adaptiveCompat', 'cacheTtlSeconds', 'modelDbAutoUpdate', 'onboarded'] as const;
     store.update((c) => {
       for (const k of allowed) if (k in body) (c.settings as any)[k] = body[k];
+      if (body.tokenSaver && typeof body.tokenSaver === 'object') c.settings.tokenSaver = normalizeTokenSaver(body.tokenSaver);
       c.settings.port = Math.min(65535, Math.max(1, Number(c.settings.port) || 18080));
       c.settings.maxAttempts = Math.min(20, Math.max(1, Number(c.settings.maxAttempts) || 6));
     });
@@ -175,6 +185,35 @@ export async function routeAdmin(req: IncomingMessage, res: ServerResponse, url:
     });
     const secure = req.headers['x-forwarded-proto'] === 'https';
     return json(res, 200, { ok: true }, pw ? { 'set-cookie': sessionCookie(createSession(cfg.settings.sessionSecret), secure) } : {});
+  }
+
+  // ---- free APIs
+  if (path === '/free' && method === 'GET') {
+    const discover = url.searchParams.get('discover') === '1';
+    const openrouter = discover ? await openRouterFreeModels(url.searchParams.get('refresh') === '1', cfg.settings.upstreamProxy) : undefined;
+    const offers = CATALOG
+      .map((t) => ({ t, free: freeInfoFor(t.type) }))
+      .filter((x) => x.free)
+      .sort((a, b) => b.free!.rank - a.free!.rank)
+      .map(({ t, free }) => ({
+        type: t.type, name: t.name, category: t.category, color: t.color, description: t.description, keyUrl: t.keyUrl, keyOptional: !!t.keyOptional,
+        vars: t.vars, free, configured: cfg.providers.filter((p) => p.type === t.type).map((p) => ({ id: p.id, enabled: p.enabled, keys: p.keys.length })),
+      }));
+    return json(res, 200, { offers, openrouter, count: Object.keys(FREE_INFO).length });
+  }
+  if (path === '/free/combo' && method === 'POST') {
+    const or = await openRouterFreeModels(false, cfg.settings.upstreamProxy);
+    const combo = buildFreeCombo(cfg, or.models, Math.min(40, Math.max(2, Number(body.maxTargets) || 16)));
+    if (!combo) throw new HttpError(400, 'Add at least one provider with a free tier, free models or a local engine first.');
+    const id = slugify(String(body.id || 'free')) || 'free';
+    combo.id = id;
+    store.update((c) => {
+      c.combos = c.combos.filter((x) => x.id !== id);
+      c.combos.push(combo);
+      if (body.makeDefault) c.settings.defaultModel = id;
+    });
+    logger.success(`Free combo "${id}" updated with ${combo.targets.length} targets`);
+    return json(res, 200, combo);
   }
 
   // ---- providers
@@ -398,6 +437,78 @@ export async function routeAdmin(req: IncomingMessage, res: ServerResponse, url:
       q: url.searchParams.get('q') || undefined,
     }));
   }
+  // ---- analytics & quotas
+  if (path === '/analytics' && method === 'GET') {
+    const range = (Object.keys(RANGE_MS).includes(url.searchParams.get('range') || '') ? url.searchParams.get('range') : '24h') as AnalyticsRange;
+    const report = analyze(deps.usage.all(), range);
+    // Human labels for provider keys and router keys (never the secrets).
+    const keyLabel = new Map<string, string>();
+    for (const p of cfg.providers) p.keys.forEach((k, i) => keyLabel.set(`${p.id}:${k.id}`, `${p.name} · ${k.label || `key ${i + 1}`} (${maskKey(k.key)})`));
+    for (const g of report.byKey) g.label = keyLabel.get(g.key) || g.key;
+    const routerKey = new Map(cfg.apiKeys.map((k) => [k.id, k.name]));
+    for (const g of report.byApiKey) g.label = g.key === '(local)' ? 'No key (local)' : routerKey.get(g.key) || g.key;
+    const monthAgo = Date.now() - 40 * 86400e3;
+    return json(res, 200, { ...report, projection: project(deps.usage.since(monthAgo)) });
+  }
+  if (path === '/usage/export.csv' && method === 'GET') {
+    const range = (Object.keys(RANGE_MS).includes(url.searchParams.get('range') || '') ? url.searchParams.get('range') : '30d') as AnalyticsRange;
+    const csv = toCsv(deps.usage.since(Date.now() - RANGE_MS[range]));
+    return text(res, 200, csv, 'text/csv; charset=utf-8', {
+      'content-disposition': `attachment; filename="open-gravity-usage-${new Date().toISOString().slice(0, 10)}.csv"`, 'cache-control': 'no-store',
+    });
+  }
+  if (path === '/quota' && method === 'GET') {
+    const provName = new Map(cfg.providers.map((p) => [p.id, p.name]));
+    const keyName = new Map<string, string>();
+    for (const p of cfg.providers) p.keys.forEach((k, i) => keyName.set(`${p.id}:${k.id}`, k.label || `key ${i + 1}`));
+    return json(res, 200, {
+      snapshots: quota.snapshots().map((s) => ({ ...s, providerName: provName.get(s.provider) || s.provider, keyLabel: keyName.get(`${s.provider}:${s.keyId}`) || (s.keyId === 'none' ? 'no key' : s.keyId) })),
+      limits: quota.status(),
+      alerts: quota.alerts,
+      balanceProviders: cfg.providers.filter((p) => supportsBalance(p) && p.keys.length).map((p) => p.id),
+    });
+  }
+  if (path === '/limits' && method === 'PUT') {
+    const list = Array.isArray(body.limits) ? body.limits : [];
+    const rules = list.map(normalizeLimit);
+    const bad = rules.findIndex((r: any) => !r);
+    if (bad >= 0) throw new HttpError(400, `Limit #${bad + 1} is incomplete: choose a scope, a target and at least one maximum`);
+    store.update((c) => {
+      c.limits = rules;
+    });
+    return json(res, 200, { ok: true, limits: store.get().limits });
+  }
+  // ---- token saver calculator
+  if (path === '/tokensaver/presets' && method === 'GET') return json(res, 200, TOKEN_SAVER_PRESETS);
+  if (path === '/tokensaver/simulate' && method === 'POST') {
+    // Either a captured request (Settings > capture bodies) or a pasted request body.
+    let format: ApiFormat = (['openai', 'anthropic', 'gemini', 'responses', 'ollama', 'completions'].includes(body.format) ? body.format : 'openai') as ApiFormat;
+    let reqBody = body.body;
+    if (body.requestId) {
+      const rec = deps.usage.get(String(body.requestId));
+      const bodies = deps.usage.getBodies(String(body.requestId));
+      if (!rec || !bodies?.request) throw new HttpError(404, 'No captured body for this request. Enable "Capture request bodies" in Settings, then send a new request.');
+      reqBody = bodies.request;
+      format = (['openai', 'anthropic', 'gemini', 'responses', 'ollama', 'completions'].includes(rec.endpoint) ? rec.endpoint : 'openai') as ApiFormat;
+    }
+    if (!reqBody || typeof reqBody !== 'object') throw new HttpError(400, 'Provide a request body (JSON) or the id of a captured request');
+    let ir;
+    try {
+      ir = parseClientRequest(format, reqBody, { model: String(reqBody.model || body.model || ''), stream: false });
+    } catch (e: any) {
+      throw new HttpError(400, `Cannot parse this request as ${format}: ${e.message}`);
+    }
+    const context = Number(body.contextWindow) > 0 ? Number(body.contextWindow) : undefined;
+    return json(res, 200, { format, tokens: requestTokens(ir), messages: ir.messages.length, contextWindow: context, results: await simulate(ir, context) });
+  }
+
+  if ((m = /^\/providers\/([^/]+)\/balance$/.exec(path)) && method === 'POST') {
+    const p = findProvider(cfg, decodeURIComponent(m[1]));
+    const keys = p.keys.filter((k) => k.enabled);
+    const out = await Promise.all(keys.map((k) => fetchBalance(p, k, cfg.settings.upstreamProxy, !!body.refresh)));
+    return json(res, 200, out.map((b, i) => ({ ...b, keyLabel: keys[i].label || `key ${i + 1}` })));
+  }
+
   if ((m = /^\/usage\/([^/]+)$/.exec(path)) && method === 'GET') {
     const rec = deps.usage.get(m[1]);
     if (!rec) throw new HttpError(404, 'Request not found');

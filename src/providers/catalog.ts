@@ -24,6 +24,8 @@ export interface ProviderFlags {
   stripSamplingForReasoning?: boolean;
   /** Gemini: use "{base}/models/..." as-is (Vertex) instead of adding /v1beta. */
   geminiRawPath?: boolean;
+  /** Native autocomplete endpoint for FIM requests ('none' = always use chat). */
+  fim?: 'mistral' | 'deepseek' | 'completions' | 'completions-suffix' | 'infill' | 'none';
 }
 
 export interface UrlVar {
@@ -166,8 +168,8 @@ export const CATALOG: ProviderTemplate[] = [
   oai('friendli', 'FriendliAI', 'https://api.friendli.ai/serverless/v1', 'cloud', 'Friendli serverless endpoints.', '#2563eb', { keyUrl: 'https://friendli.ai/suite', models: ['meta-llama-3.3-70b-instruct', 'deepseek-r1'] }),
   oai('parasail', 'Parasail', 'https://api.parasail.io/v1', 'cloud', 'Serverless open-model inference.', '#0ea5e9', { models: ['parasail-deepseek-r1', 'parasail-llama-33-70b-fp8'] }),
   oai('nscale', 'Nscale', 'https://inference.api.nscale.com/v1', 'cloud', 'European serverless inference.', '#111827', { models: ['meta-llama/Llama-3.3-70B-Instruct', 'Qwen/Qwen3-235B-A22B'] }),
-  oai('scaleway', 'Scaleway Generative APIs', 'https://api.scaleway.ai/v1', 'cloud', 'EU-hosted open models.', '#4f0599', { keyUrl: 'https://console.scaleway.com/iam/api-keys', models: ['gpt-oss-120b', 'qwen3-coder-30b-a3b-instruct', 'llama-3.3-70b-instruct', 'mistral-small-3.2-24b-instruct-2506'] }),
-  oai('ovhcloud', 'OVHcloud AI Endpoints', 'https://oai.endpoints.kepler.ai.cloud.ovh.net/v1', 'cloud', 'EU sovereign AI endpoints.', '#000e9c', { models: ['gpt-oss-120b', 'Meta-Llama-3_3-70B-Instruct', 'Qwen3-32B'] }),
+  oai('scaleway', 'Scaleway Generative APIs', 'https://api.scaleway.ai/v1', 'cloud', 'EU-hosted open models. First million tokens free.', '#4f0599', { freeTier: true, keyUrl: 'https://console.scaleway.com/iam/api-keys', models: ['gpt-oss-120b', 'qwen3-coder-30b-a3b-instruct', 'llama-3.3-70b-instruct', 'mistral-small-3.2-24b-instruct-2506'] }),
+  oai('ovhcloud', 'OVHcloud AI Endpoints', 'https://oai.endpoints.kepler.ai.cloud.ovh.net/v1', 'cloud', 'EU sovereign AI endpoints. Works without a key at a low rate limit.', '#000e9c', { freeTier: true, keyOptional: true, keyUrl: 'https://endpoints.ai.cloud.ovh.net', models: ['gpt-oss-120b', 'Meta-Llama-3_3-70B-Instruct', 'Qwen3-32B'] }),
   oai('ionos', 'IONOS AI Model Hub', 'https://openai.inference.de-txl.ionos.com/v1', 'cloud', 'German-hosted open models.', '#003d8f', { models: ['meta-llama/Llama-3.3-70B-Instruct', 'mistralai/Mistral-Small-24B-Instruct'] }),
   oai('upstage', 'Upstage', 'https://api.upstage.ai/v1', 'cloud', 'Solar models.', '#8b5cf6', { keyUrl: 'https://console.upstage.ai/api-keys', models: ['solar-pro2', 'solar-mini'] }),
   oai('reka', 'Reka', 'https://api.reka.ai/v1', 'cloud', 'Reka Core and Flash.', '#ef4444', { models: ['reka-core', 'reka-flash'], modelsApi: 'none' }),
@@ -183,11 +185,11 @@ export const CATALOG: ProviderTemplate[] = [
   }),
   oai('wandb', 'W&B Inference', 'https://api.inference.wandb.ai/v1', 'cloud', 'Weights & Biases hosted open models.', '#ffbe00', { models: ['deepseek-ai/DeepSeek-V3.1', 'Qwen/Qwen3-Coder-480B-A35B-Instruct', 'moonshotai/Kimi-K2-Instruct'] }),
   oai('gmi', 'GMI Cloud', 'https://api.gmi-serving.com/v1', 'cloud', 'GPU cloud inference.', '#0f172a', { models: ['deepseek-ai/DeepSeek-V3.1', 'Qwen/Qwen3-Coder-480B-A35B-Instruct-FP8'] }),
-  oai('ollama-cloud', 'Ollama Cloud', 'https://ollama.com/v1', 'cloud', 'Ollama cloud models with an ollama.com API key.', '#444444', { keyUrl: 'https://ollama.com/settings/keys', models: ['gpt-oss:120b', 'qwen3-coder:480b', 'deepseek-v3.1:671b'] }),
+  oai('ollama-cloud', 'Ollama Cloud', 'https://ollama.com/v1', 'cloud', 'Ollama cloud models with an ollama.com API key. Free usage tier.', '#444444', { freeTier: true, keyUrl: 'https://ollama.com/settings/keys', models: ['gpt-oss:120b', 'qwen3-coder:480b', 'deepseek-v3.1:671b'] }),
   oai('sarvam', 'Sarvam AI', 'https://api.sarvam.ai/v1', 'cloud', 'Indic-language models.', '#f97316', { auth: 'custom', authHeader: 'api-subscription-key', authPrefix: '', modelsApi: 'none', models: ['sarvam-m'] }),
   oai('codestral', 'Mistral Codestral', 'https://codestral.mistral.ai/v1', 'cloud', 'Codestral endpoint (separate key).', '#fa520f', { models: ['codestral-latest'], flags: { toolIdStyle: 'mistral', streamOptions: false } }),
   oai('zai', 'Z.ai GLM', 'https://api.z.ai/api/paas/v4', 'cloud', 'GLM models (OpenAI-compatible endpoint).', '#2d5bff', {
-    keyUrl: 'https://z.ai/manage-apikey/apikey-list', modelsApi: 'none', models: ['glm-4.6', 'glm-4.5', 'glm-4.5-air'],
+    freeTier: true, keyUrl: 'https://z.ai/manage-apikey/apikey-list', modelsApi: 'none', models: ['glm-4.6', 'glm-4.5', 'glm-4.5-air', 'glm-4.5-flash'],
   }),
   p('zai-coding', 'Z.ai GLM Coding Plan', 'anthropic', 'https://api.z.ai/api/anthropic', 'cloud', 'GLM Coding Plan subscription (Anthropic-compatible endpoint).', '#2d5bff', {
     keyUrl: 'https://z.ai/manage-apikey/apikey-list', modelsApi: 'none', models: ['glm-4.6', 'glm-4.5-air'],
@@ -214,8 +216,8 @@ export const CATALOG: ProviderTemplate[] = [
   }),
 
   // ------------------------------------------------------------ gateways
-  oai('vercel', 'Vercel AI Gateway', 'https://ai-gateway.vercel.sh/v1', 'gateway', 'Hundreds of models behind one key.', '#000000', {
-    keyUrl: 'https://vercel.com/dashboard', models: ['anthropic/claude-sonnet-4.5', 'openai/gpt-5', 'google/gemini-2.5-pro', 'xai/grok-code-fast-1'],
+  oai('vercel', 'Vercel AI Gateway', 'https://ai-gateway.vercel.sh/v1', 'gateway', 'Hundreds of models behind one key. Free monthly credits.', '#000000', {
+    freeTier: true, keyUrl: 'https://vercel.com/dashboard', models: ['anthropic/claude-sonnet-4.5', 'openai/gpt-5', 'google/gemini-2.5-pro', 'xai/grok-code-fast-1'],
   }),
   oai('requesty', 'Requesty', 'https://router.requesty.ai/v1', 'gateway', 'LLM router with caching and fallbacks.', '#2563eb', { models: ['anthropic/claude-sonnet-4-5', 'openai/gpt-5', 'google/gemini-2.5-pro'] }),
   oai('aihubmix', 'AIHubMix', 'https://aihubmix.com/v1', 'gateway', 'Multi-vendor model hub.', '#0891b2', { models: ['gpt-5', 'claude-sonnet-4-5', 'gemini-2.5-pro'] }),
@@ -223,16 +225,22 @@ export const CATALOG: ProviderTemplate[] = [
   oai('poe', 'Poe', 'https://api.poe.com/v1', 'gateway', 'Poe bots and models via an OpenAI-compatible API.', '#5d5cde', { keyUrl: 'https://poe.com/api_key', models: ['Claude-Sonnet-4.5', 'GPT-5', 'Gemini-2.5-Pro'] }),
   oai('opencode-zen', 'OpenCode Zen', 'https://opencode.ai/zen/v1', 'gateway', 'Curated coding models from the OpenCode team.', '#18181b', { models: ['qwen3-coder', 'kimi-k2', 'gpt-5', 'claude-sonnet-4-5'] }),
   oai('portkey', 'Portkey', 'https://api.portkey.ai/v1', 'gateway', 'Portkey AI gateway (add your x-portkey-provider / virtual key header).', '#111827', { auth: 'custom', authHeader: 'x-portkey-api-key', authPrefix: '' }),
+  oai('pollinations', 'Pollinations', 'https://text.pollinations.ai/openai', 'gateway', 'Free public API, no sign-up (shared and rate-limited).', '#0a0a0a', {
+    freeTier: true, keyOptional: true, keyUrl: 'https://auth.pollinations.ai', modelsApi: 'none', models: ['openai', 'openai-fast', 'mistral', 'qwen-coder'], flags: { streamOptions: false },
+  }),
+  oai('llm7', 'LLM7.io', 'https://api.llm7.io/v1', 'gateway', 'Free public API; works without a key, a free token raises the limits.', '#0ea5e9', {
+    freeTier: true, keyOptional: true, keyUrl: 'https://token.llm7.io',
+  }),
   oai('litellm', 'LiteLLM proxy', 'http://127.0.0.1:4000/v1', 'gateway', 'A LiteLLM proxy you run (100+ providers behind it).', '#0f172a', { keyOptional: true }),
 
   // --------------------------------------------------------------- china
   oai('qwen-china', 'Alibaba Bailian (China)', 'https://dashscope.aliyuncs.com/compatible-mode/v1', 'china', 'Qwen models, mainland China endpoint.', '#615ced', { models: ['qwen3-coder-plus', 'qwen3-max', 'qwen-plus'] }),
-  oai('zai-china', 'Zhipu BigModel (China)', 'https://open.bigmodel.cn/api/paas/v4', 'china', 'GLM models, mainland China endpoint.', '#2d5bff', { modelsApi: 'none', models: ['glm-4.6', 'glm-4.5-air', 'glm-4-flash'] }),
+  oai('zai-china', 'Zhipu BigModel (China)', 'https://open.bigmodel.cn/api/paas/v4', 'china', 'GLM models, mainland China endpoint. Free Flash models.', '#2d5bff', { freeTier: true, modelsApi: 'none', models: ['glm-4.6', 'glm-4.5-air', 'glm-4.5-flash', 'glm-4-flash'] }),
   oai('moonshot-china', 'Moonshot Kimi (China)', 'https://api.moonshot.cn/v1', 'china', 'Kimi, mainland China endpoint.', '#000000', { models: ['kimi-k2-0905-preview', 'kimi-k2-turbo-preview'] }),
   oai('volcengine', 'Volcengine Ark (Doubao)', 'https://ark.cn-beijing.volces.com/api/v3', 'china', 'ByteDance Doubao and hosted models.', '#1664ff', { modelsApi: 'none', models: ['doubao-seed-1-6-250615', 'deepseek-v3-1-250821', 'kimi-k2-250905'] }),
-  oai('qianfan', 'Baidu Qianfan', 'https://qianfan.baidubce.com/v2', 'china', 'ERNIE and hosted models (OpenAI-compatible v2 API).', '#2932e1', { modelsApi: 'none', models: ['ernie-4.5-turbo-128k', 'ernie-x1-turbo-32k', 'deepseek-v3'] }),
-  oai('hunyuan', 'Tencent Hunyuan', 'https://api.hunyuan.cloud.tencent.com/v1', 'china', 'Hunyuan models.', '#0052d9', { modelsApi: 'none', models: ['hunyuan-turbos-latest', 'hunyuan-t1-latest'] }),
-  oai('spark', 'iFlytek Spark', 'https://spark-api-open.xf-yun.com/v1', 'china', 'Spark models (key format: APIKey:APISecret).', '#1d4ed8', { modelsApi: 'none', models: ['4.0Ultra', 'generalv3.5'] }),
+  oai('qianfan', 'Baidu Qianfan', 'https://qianfan.baidubce.com/v2', 'china', 'ERNIE and hosted models (OpenAI-compatible v2 API). Free Speed/Lite models.', '#2932e1', { freeTier: true, modelsApi: 'none', models: ['ernie-4.5-turbo-128k', 'ernie-x1-turbo-32k', 'deepseek-v3', 'ernie-speed-128k', 'ernie-lite-8k'] }),
+  oai('hunyuan', 'Tencent Hunyuan', 'https://api.hunyuan.cloud.tencent.com/v1', 'china', 'Hunyuan models. hunyuan-lite is free.', '#0052d9', { freeTier: true, modelsApi: 'none', models: ['hunyuan-turbos-latest', 'hunyuan-t1-latest', 'hunyuan-lite'] }),
+  oai('spark', 'iFlytek Spark', 'https://spark-api-open.xf-yun.com/v1', 'china', 'Spark models (key format: APIKey:APISecret). Spark Lite is free.', '#1d4ed8', { freeTier: true, modelsApi: 'none', models: ['4.0Ultra', 'generalv3.5', 'lite'] }),
   oai('stepfun', 'StepFun', 'https://api.stepfun.com/v1', 'china', 'Step models.', '#0f172a', { models: ['step-2-16k', 'step-1-8k'] }),
   oai('baichuan', 'Baichuan', 'https://api.baichuan-ai.com/v1', 'china', 'Baichuan models.', '#f97316', { modelsApi: 'none', models: ['Baichuan4-Turbo', 'Baichuan4-Air'] }),
   oai('yi', '01.AI Yi', 'https://api.lingyiwanwu.com/v1', 'china', 'Yi models.', '#16a34a', { models: ['yi-lightning'] }),

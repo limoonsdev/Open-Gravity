@@ -103,7 +103,7 @@ export function authHeaders(p: ProviderConfig, key: ProviderKey | undefined): Re
   return h;
 }
 
-function flagsFor(p: ProviderConfig) {
+export function flagsFor(p: ProviderConfig) {
   return { ...(getTemplate(p.type)?.flags || {}), ...(p.flags || {}) };
 }
 

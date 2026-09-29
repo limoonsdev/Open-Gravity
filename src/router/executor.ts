@@ -26,12 +26,20 @@ import { usageFromGemini } from '../translate/gemini';
 import { usageFromResponses } from '../translate/responses';
 import { emulateToolsRequest, ToolCallStreamParser } from '../translate/toolemu';
 import { ThinkTagExtractor, ToolArgsNormalizer, StreamTransform, runTransforms } from '../translate/transforms';
-import { buildPassthrough, buildTranslated, upstreamFetch, extractErrorMessage, UpstreamRequest } from '../providers/upstream';
+import { buildPassthrough, buildTranslated, upstreamFetch, extractErrorMessage, UpstreamRequest, flagsFor as flagsOf } from '../providers/upstream';
 import { antigravityGenerate } from '../providers/antigravity';
 import { resolveModel, pickKeys, Candidate } from './resolve';
 import { health } from './health';
 import { CompatFix, compatKey, detectCompatFix, mergeFix, applyIrCompat, applyBodyCompat, needsTranslation, irHasImages } from './compat';
 import { responseCache, cacheKey, replayEvents } from './cache';
+import { quota, describeLimit } from './quota';
+import {
+  applyTokenSaver, compactConversation, compactionNeeded, requestTokens, SaverResult,
+  summaryCacheKey, cachedSummary, storeSummary, transcript, SUMMARY_PROMPT,
+} from './tokensaver';
+import { isInternal, internalChat } from './internal';
+import { nativeFimRoute, nativeFimRequest, fimDecoderFor, emulateFim, FimCleaner, FimRoute } from '../translate/fim';
+import { detectClient, ClientId } from '../core/clients';
 
 export interface InferenceInput {
   format: ApiFormat;
@@ -166,6 +174,11 @@ interface Plan {
   compat: CompatFix;
   emulate: boolean;
   passthrough: boolean;
+  /** Prompt size actually sent (after the token saver), for savings stats. */
+  sentTokens?: number;
+  compaction?: string[];
+  /** Autocomplete request: native completion route, or chat emulation when undefined. */
+  fim?: { route?: FimRoute };
 }
 
 interface Primed {
@@ -204,10 +217,19 @@ class Runner {
   readonly t0 = Date.now();
   readonly requestId = randomId(12);
   readonly attempts: Attempt[] = [];
+  /** Targets skipped without a call (user limits), shown with the attempts. */
+  readonly skipped: Attempt[] = [];
   readonly adapted: string[] = [];
   readonly abort = new AbortController();
   emulated = false;
   captured?: CapturedBodies;
+  readonly client: ClientId;
+  /** Request sent by the router itself (summaries): no token saver, no limits. */
+  readonly internal: boolean;
+  /** The IR after the token saver's model-independent stage. */
+  workIr: IRRequest;
+  saver?: SaverResult;
+  private workTokens?: number;
 
   constructor(
     public input: InferenceInput,
@@ -217,6 +239,9 @@ class Runner {
     public deps: Deps,
   ) {
     if (deps.config.settings.captureBodies) this.captured = { request: input.body };
+    this.client = detectClient(input.headers);
+    this.internal = isInternal(input.headers);
+    this.workIr = ir;
     res.on('close', () => {
       if (!res.writableFinished) this.abort.abort();
     });
@@ -236,17 +261,76 @@ class Runner {
     });
   }
 
+  get saverSettings() {
+    const s = this.settings.tokenSaver;
+    return this.internal || !s || s.mode === 'off' ? undefined : s;
+  }
+
+  /** Stage 1 of the token saver (same for every candidate). */
+  initSaver() {
+    const s = this.saverSettings;
+    if (!s) return;
+    const r = applyTokenSaver(this.ir, s);
+    if (r.saved > 0) {
+      this.saver = r;
+      this.workIr = r.ir;
+    }
+  }
+
+  contextWindow(cand: Candidate, compat: CompatFix): number | undefined {
+    return compat.contextWindow || modelDb.lookup(cand.provider.type, cand.model)?.maxInput || undefined;
+  }
+
+  needsCompaction(cand: Candidate, compat: CompatFix): boolean {
+    const s = this.saverSettings;
+    if (!s) return false;
+    this.workTokens ??= requestTokens(this.workIr);
+    return compactionNeeded(this.workTokens, this.contextWindow(cand, compat), s, this.workIr.maxTokens);
+  }
+
   plan(cand: Candidate, key: ProviderKey, compat: CompatFix): Plan {
     const emulate = shouldEmulate(cand.provider, cand.model, this.ir, compat);
     // Non-streaming passthrough returns raw JSON we can't cache: stream + aggregate instead when caching.
     const cacheable = (this.settings.cacheTtlSeconds || 0) > 0 && !this.input.stream;
-    const passthrough = this.settings.passthrough && cand.provider.format === this.input.format && !emulate && !needsTranslation(compat) && !cacheable;
-    return { cand, key, compat, emulate, passthrough };
+    const fim = this.ir.fim
+      ? { route: compat.noNativeFim ? undefined : nativeFimRoute(cand.provider.type, cand.provider.format, this.ir.fim, flagsOf(cand.provider).fim) }
+      : undefined;
+    const passthrough = this.settings.passthrough && cand.provider.format === this.input.format && !emulate && !needsTranslation(compat) && !cacheable
+      && !this.saver && !fim && !this.needsCompaction(cand, compat);
+    return { cand, key, compat, emulate, passthrough, fim };
+  }
+
+  /** Summary of removed turns through the router itself, cached by content. */
+  private async summarize(model: string, removed: IRRequest['messages']): Promise<string | undefined> {
+    const key = summaryCacheKey(model, removed);
+    const hit = cachedSummary(key);
+    if (hit) return hit;
+    const text = await internalChat(model, SUMMARY_PROMPT, transcript(removed), 1200);
+    storeSummary(key, text);
+    return text;
+  }
+
+  /** Token saver stage 2 (compaction for this model), then the upstream adjustments. */
+  async preparedIr(plan: Plan): Promise<IRRequest> {
+    let ir = this.workIr;
+    const s = this.saverSettings;
+    const win = this.contextWindow(plan.cand, plan.compat);
+    if (s && win && this.needsCompaction(plan.cand, plan.compat)) {
+      const summarize = s.summarizer ? (removed: IRRequest['messages']) => this.summarize(s.summarizer, removed) : undefined;
+      const r = await compactConversation(ir, win, s, summarize);
+      if (r.saved > 0) {
+        ir = r.ir;
+        plan.compaction = r.actions;
+      }
+    }
+    if (ir !== this.ir) plan.sentTokens = requestTokens(ir);
+    return this.upstreamIr(plan, ir);
   }
 
   /** The IR as sent upstream: model limits, compatibility fixes, tool emulation. */
-  upstreamIr(plan: Plan): IRRequest {
-    let ir = this.ir;
+  upstreamIr(plan: Plan, base: IRRequest = this.workIr): IRRequest {
+    let ir = base;
+    if (ir.fim && !plan.fim?.route) ir = emulateFim(ir);
     const info = modelDb.lookup(plan.cand.provider.type, plan.cand.model);
     if (info?.maxOutput && ir.maxTokens && ir.maxTokens > info.maxOutput) ir = { ...ir, maxTokens: info.maxOutput };
     ir = applyIrCompat(ir, plan.compat);
@@ -258,6 +342,7 @@ class Runner {
   transforms(plan: Plan): StreamTransform[] {
     if (plan.passthrough) return [];
     const list: StreamTransform[] = [];
+    if (this.ir.fim && !plan.fim?.route) list.push(new FimCleaner(this.ir.fim.prefix));
     const f = plan.cand.provider.format;
     if (f === 'openai' || f === 'responses' || f === 'antigravity' || plan.emulate) list.push(new ThinkTagExtractor());
     const tools = this.ir.tools || [];
@@ -271,7 +356,7 @@ class Runner {
     const p = plan.cand.provider;
     const t0 = Date.now();
     const transforms = this.transforms(plan);
-    const upIr = this.upstreamIr(plan);
+    const upIr = plan.passthrough ? this.workIr : await this.preparedIr(plan);
     let source: AsyncGenerator<Item>;
     let upstreamBody: any;
 
@@ -290,6 +375,10 @@ class Runner {
       if (plan.passthrough) {
         const body = this.input.format === 'anthropic' ? sanitizeAnthropicPassthrough(structuredClone(this.input.body)) : this.input.body;
         up = buildPassthrough(p, plan.key, plan.cand.model, this.input.format, body, this.input.headers, stream);
+      } else if (plan.fim?.route && upIr.fim) {
+        // Native autocomplete endpoint: same auth/headers, provider-specific URL and body.
+        const native = nativeFimRequest(plan.fim.route, p.baseUrl, plan.cand.model, upIr);
+        up = { ...buildTranslated(p, plan.key, plan.cand.model, emulateFim(upIr)), url: native.url, body: native.body };
       } else up = buildTranslated(p, plan.key, plan.cand.model, upIr);
       up = { ...up, body: applyBodyCompat(up.body, p.format as any, plan.compat) };
       upstreamBody = up.body;
@@ -312,6 +401,7 @@ class Runner {
         const cause = e?.cause?.code || e?.cause?.message || '';
         throw new AttemptFailed({ status: timeout ? 504 : 502, message: `Cannot reach ${p.name}: ${e.message}${cause ? ` (${cause})` : ''}`, next: 'key' });
       }
+      quota.observe(p.id, plan.key.id, plan.cand.model, resp.headers as any);
       if (!resp.ok) {
         const text = await resp.text().catch(() => '');
         throw new AttemptFailed({
@@ -336,7 +426,7 @@ class Runner {
       }
       if (!resp.body) throw new AttemptFailed({ status: 502, message: 'Upstream returned an empty body', next: 'key' });
 
-      const decoder = createDecoder(p.format as any);
+      const decoder = (plan.fim?.route && fimDecoderFor(plan.fim.route)) || createDecoder(p.format as any);
       const body = resp.body as AsyncIterable<Uint8Array>;
       const passthrough = plan.passthrough;
       source = (async function* () {
@@ -529,10 +619,17 @@ class Runner {
   /** Try to derive a compatibility fix from a failure. Returns the new fix or undefined. */
   adapt(plan: Plan, f: Failure): CompatFix | undefined {
     if (!this.settings.adaptiveCompat || f.raw === undefined) return undefined;
+    if (plan.fim?.route && [400, 404, 405, 422, 501].includes(f.status) && !plan.compat.noNativeFim) {
+      const reason = 'native completion endpoint unavailable: autocomplete served through chat';
+      const next = mergeFix(plan.compat, { noNativeFim: true }, reason);
+      this.persistCompat(plan.cand, next);
+      this.adapted.push(`${plan.cand.target}: ${reason}`);
+      return next;
+    }
     const det = detectCompatFix({
       status: f.status, error: f.raw, format: plan.cand.provider.format === 'antigravity' ? 'openai' : (plan.cand.provider.format as any), current: plan.compat,
       hasTools: !!this.ir.tools?.length, hasImages: irHasImages(this.ir), hasSystem: !!this.ir.system, hasReasoning: !!this.ir.reasoning,
-      hasResponseFormat: !!this.ir.responseFormat, requestedMaxTokens: plan.passthrough ? this.input.body?.max_tokens ?? this.input.body?.max_completion_tokens ?? this.ir.maxTokens : this.upstreamIr(plan).maxTokens || 32000,
+      hasResponseFormat: !!this.ir.responseFormat, canCompact: !!this.saverSettings && this.saverSettings.compactAt > 0, requestedMaxTokens: plan.passthrough ? this.input.body?.max_tokens ?? this.input.body?.max_completion_tokens ?? this.ir.maxTokens : this.upstreamIr(plan).maxTokens || 32000,
     });
     if (!det) return undefined;
     const next = mergeFix(plan.compat, det.fix, det.reason);
@@ -554,8 +651,9 @@ class Runner {
   record(extra: Partial<UsageRecord> & { status: number; ok: boolean }, resolutionCombo?: string) {
     const r: UsageRecord = {
       id: this.requestId, ts: this.t0, endpoint: this.input.endpoint, requestedModel: this.input.model, apiKeyId: this.input.apiKeyId,
-      combo: resolutionCombo, latencyMs: Date.now() - this.t0, stream: this.input.stream, input: 0, output: 0, cost: 0, attempts: this.attempts,
-      client: clampStr(String(this.input.headers['user-agent'] || ''), 80),
+      combo: resolutionCombo, latencyMs: Date.now() - this.t0, stream: this.input.stream, input: 0, output: 0, cost: 0,
+      attempts: this.skipped.length ? [...this.skipped, ...this.attempts] : this.attempts,
+      client: this.client.name, clientId: this.client.id, ua: clampStr(String(this.input.headers['user-agent'] || ''), 120),
       ...(this.emulated ? { emulatedTools: true } : {}), ...(this.adapted.length ? { adapted: this.adapted } : {}),
       ...extra,
     };
@@ -577,7 +675,14 @@ class Runner {
     if (plan.emulate) this.emulated = true;
     const local = p.format === 'antigravity' || /127\.0\.0\.1|localhost/.test(p.baseUrl);
     const cost = estimateCost(plan.cand.model, result.usage, local, p.type);
+    // Token saver: prompt tokens not sent, valued at this model's input price.
+    const saved = plan.sentTokens !== undefined ? Math.max(0, requestTokens(this.ir) - plan.sentTokens) : 0;
+    const saverActions = [...(this.saver?.actions || []), ...(plan.compaction || [])];
+    const savedFields = saved > 0
+      ? { saved, savedCost: estimateCost(plan.cand.model, { input: saved, output: 0 }, local, p.type), saverActions }
+      : {};
     this.record({
+      ...savedFields,
       status: result.status, ok: result.status < 400, provider: p.id, model: plan.cand.model, keyId: plan.key.id,
       ttftMs: result.ttftMs, input: result.usage.input, output: result.usage.output, cacheRead: result.usage.cacheRead,
       cacheWrite: result.usage.cacheWrite, reasoning: result.usage.reasoning, cost, estimated: result.estimated, error: result.error,
@@ -605,6 +710,7 @@ export async function handleInference(input: InferenceInput, _req: IncomingMessa
   const ctx: ClientContext = { format: input.format, model: clientModel, ir, estimatedInput: estimateRequestTokens(ir) };
   const run = new Runner(input, ir, ctx, res, deps);
   const combo = resolution.combo;
+  run.initSaver();
 
   if (!resolution.candidates.length) {
     const msg = resolution.error || 'Model not found';
@@ -612,6 +718,24 @@ export async function handleInference(input: InferenceInput, _req: IncomingMessa
     run.record({ status: 404, ok: false, error: msg }, combo);
     return;
   }
+
+  // ---- budgets and limits that apply to the whole request
+  const overBudget = quota.blocking({ apiKeyId: input.apiKeyId, clientId: run.client.id }, ['global', 'apikey', 'client']);
+  if (overBudget) {
+    const msg = describeLimit(overBudget);
+    sendJson(res, 429, errorBody(input.format, 429, msg), { 'retry-after': String(Math.max(1, Math.ceil((overBudget.windowEnd - Date.now()) / 1000))) });
+    run.record({ status: 429, ok: false, error: msg }, combo);
+    return;
+  }
+  /** Keys usable for a candidate: user limits always apply, provider "0 remaining" only on the first pass. */
+  const usableKeys = (cand: Candidate, ignoreCooldown: boolean) => {
+    const all = pickKeys(cand.provider, cand.model, ignoreCooldown);
+    const keys = all.filter((k) => !quota.blocking({ provider: cand.provider.id, keyId: k.id }, ['key'])
+      && (ignoreCooldown || !quota.exhaustedUntil(cand.provider.id, k.id, cand.model)));
+    const limit = keys.length ? undefined : all.map((k) => quota.blocking({ provider: cand.provider.id, keyId: k.id }, ['key'])).find(Boolean);
+    return { keys, all, limit };
+  };
+  const candidateLimit = (cand: Candidate) => quota.blocking({ provider: cand.provider.id, model: cand.model }, ['provider', 'model']);
 
   // ---- response cache
   const ttlMs = (settings.cacheTtlSeconds || 0) * 1000;
@@ -644,7 +768,8 @@ export async function handleInference(input: InferenceInput, _req: IncomingMessa
   // ---- race: first token wins between the first two candidates
   if (resolution.strategy === 'race' && resolution.candidates.length > 1) {
     const racers = resolution.candidates
-      .map((cand) => ({ cand, key: pickKeys(cand.provider, cand.model)[0] }))
+      .filter((cand) => !candidateLimit(cand))
+      .map((cand) => ({ cand, key: usableKeys(cand, false).keys[0] }))
       .filter((r) => r.key)
       .slice(0, 2);
     if (racers.length === 2) {
@@ -697,9 +822,17 @@ export async function handleInference(input: InferenceInput, _req: IncomingMessa
   for (const ignoreCooldown of [false, true]) {
     let skippedForCooldown = false;
     outer: for (const cand of resolution.candidates) {
-      const keys = pickKeys(cand.provider, cand.model, ignoreCooldown);
+      const limited = candidateLimit(cand);
+      if (limited) {
+        if (!ignoreCooldown) run.skipped.push({ provider: cand.provider.id, model: cand.model, status: 429, error: clampStr(describeLimit(limited), 300), ms: 0 });
+        lastFailure = { status: 429, message: describeLimit(limited), next: 'candidate' };
+        continue;
+      }
+      const { keys, all, limit } = usableKeys(cand, ignoreCooldown);
       if (!keys.length) {
-        if (cand.provider.keys.length && cand.provider.keys.every((k) => !k.enabled)) {
+        if (limit) lastFailure = { status: 429, message: describeLimit(limit), next: 'candidate' };
+        else if (all.length) skippedForCooldown = true;
+        else if (cand.provider.keys.length && cand.provider.keys.every((k) => !k.enabled)) {
           lastFailure = { status: 401, message: `Provider "${cand.provider.id}" has no enabled API key`, next: 'candidate' };
         } else skippedForCooldown = true;
         continue;

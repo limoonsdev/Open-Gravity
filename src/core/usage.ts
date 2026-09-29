@@ -38,7 +38,15 @@ export interface UsageRecord {
   cost: number;
   estimated?: boolean;
   attempts: Attempt[];
+  /** Friendly client name (Claude Code, Cursor...) and its id. */
   client?: string;
+  clientId?: string;
+  /** Raw User-Agent (clipped). */
+  ua?: string;
+  /** Tokens removed by the token saver before sending, and what it did. */
+  saved?: number;
+  savedCost?: number;
+  saverActions?: string[];
   emulatedTools?: boolean;
   adapted?: string[];
   cached?: boolean;
@@ -118,6 +126,23 @@ export class UsageStore extends EventEmitter {
     }
     fs.appendFile(this.fileFor(r.ts), JSON.stringify(r) + '\n', () => { /* best effort */ });
     this.emit('record', r);
+  }
+
+  /** All records in memory (oldest first). */
+  all(): readonly UsageRecord[] {
+    return this.records;
+  }
+
+  /** Records at or after ts (oldest first). */
+  since(ts: number): UsageRecord[] {
+    let lo = 0;
+    let hi = this.records.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (this.records[mid].ts < ts) lo = mid + 1;
+      else hi = mid;
+    }
+    return this.records.slice(lo);
   }
 
   getBodies(id: string) {

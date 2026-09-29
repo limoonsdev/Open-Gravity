@@ -8,6 +8,7 @@ import { parseGeminiRequest, GeminiStreamEncoder, GeminiStreamDecoder, buildGemi
 import { parseResponsesRequest, ResponsesStreamEncoder, ResponsesStreamDecoder, buildResponsesResponse, customToolNames } from './responses';
 import { parseOllamaChat, parseOllamaGenerate, OllamaStreamEncoder, buildOllamaResponse } from './ollama';
 import { parseCompletionsRequest, CompletionsStreamEncoder, buildCompletionsResponse } from './completions';
+import { parseFimRequest } from './fim';
 
 export * from './ir';
 
@@ -31,6 +32,7 @@ export function parseClientRequest(format: ApiFormat, body: any, opts: { model?:
     case 'ollama': return parseOllamaChat(body, !!opts.stream);
     case 'ollama-generate': return parseOllamaGenerate(body, !!opts.stream);
     case 'completions': return parseCompletionsRequest(body);
+    case 'fim': return parseFimRequest(body);
   }
 }
 
@@ -48,6 +50,7 @@ export function createEncoder(ctx: ClientContext): StreamEncoder {
     case 'ollama': return new OllamaStreamEncoder(ctx.model, 'chat');
     case 'ollama-generate': return new OllamaStreamEncoder(ctx.model, 'generate');
     case 'completions': return new CompletionsStreamEncoder(ctx.model, ctx.ir.includeUsage);
+    case 'fim': return new OpenAIStreamEncoder(ctx.model, ctx.ir.includeUsage);
   }
 }
 
@@ -69,6 +72,7 @@ export function buildClientResponse(ctx: ClientContext, res: IRResponse): any {
     case 'ollama': return buildOllamaResponse(res, ctx.model, 'chat');
     case 'ollama-generate': return buildOllamaResponse(res, ctx.model, 'generate');
     case 'completions': return buildCompletionsResponse(res, ctx.model);
+    case 'fim': return buildOpenAIResponse(res, ctx.model);
   }
 }
 

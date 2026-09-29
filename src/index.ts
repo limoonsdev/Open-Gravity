@@ -33,7 +33,7 @@ function parseArgs(argv: string[]): Parsed {
     if (a.startsWith('--')) {
       const [k, v] = a.slice(2).split('=', 2);
       if (v !== undefined) flags[k] = v;
-      else if (argv[i + 1] && !argv[i + 1].startsWith('-') && !['no-open', 'help', 'version', 'json'].includes(k)) flags[k] = argv[++i];
+      else if (argv[i + 1] && !argv[i + 1].startsWith('-') && !['no-open', 'help', 'version', 'json', 'desktop'].includes(k)) flags[k] = argv[++i];
       else flags[k] = true;
     } else if (a === '-p') flags.port = argv[++i];
     else if (a === '-h') flags.help = true;
@@ -91,8 +91,25 @@ async function ensureRunning(): Promise<{ baseUrl: string; app?: RunningApp; key
   return { baseUrl: app.baseUrl, app, key, config };
 }
 
+/** Exit when the process that launched us (the desktop app) goes away. */
+function watchParent(pid: number) {
+  if (!Number.isInteger(pid) || pid <= 0) return;
+  const timer = setInterval(() => {
+    try {
+      process.kill(pid, 0);
+    } catch (e: any) {
+      if (e?.code === 'ESRCH') process.exit(0);
+    }
+  }, 2000);
+  timer.unref();
+}
+
 async function cmdStart(p: Parsed) {
   const config = new ConfigStore();
+  // Desktop mode: launched by the desktop app, which reads the "OG_READY <url>"
+  // line from stdout and shows the dashboard in its own window.
+  const desktop = !!p.flags.desktop;
+  if (desktop) watchParent(Number(p.flags['parent-pid']));
   let app: RunningApp;
   try {
     app = await startApp({
@@ -103,11 +120,26 @@ async function cmdStart(p: Parsed) {
   } catch (e: any) {
     if (e.code === 'ALREADY_RUNNING') {
       const url = baseUrlFor(e.host, e.port);
+      if (desktop) {
+        console.log(`OG_READY ${url}`);
+        return;
+      }
       console.log(`${c.green('✔')} Open Gravity is already running at ${c.cyan(url)} — opening the dashboard.`);
       if (!p.flags['no-open']) openBrowser(url);
       return;
     }
     throw e;
+  }
+  if (desktop) {
+    logger.success(`Router listening on ${app.baseUrl}`);
+    console.log(`OG_READY ${app.baseUrl}`);
+    const stopDesktop = async () => {
+      await app.stop();
+      process.exit(0);
+    };
+    process.on('SIGINT', stopDesktop);
+    process.on('SIGTERM', stopDesktop);
+    return;
   }
   banner(app);
   logger.success(`Router listening on ${app.baseUrl}`);

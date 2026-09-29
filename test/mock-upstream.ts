@@ -37,6 +37,7 @@ function scripted(model: string, body: any): string | null {
   const all = msgs.map((m: any) => textOf(m.content)).join('\n');
   const lastUser = textOf([...msgs].reverse().find((m: any) => m.role === 'user')?.content);
   if (model.includes('tagreason')) return '<think>Reasoning here.</think>The answer is 42.';
+  if (model.includes('fimchat')) return '```python\ndef add(a, b):\n    return a + b\n```';
   if (!model.includes('notools') && !model.includes('emu') && !model.includes('codegeex')) return null;
   if (/<tool_response/.test(lastUser)) return 'It is sunny in Paris.';
   if (/<tools>/.test(all)) {
@@ -174,6 +175,22 @@ export async function startMockUpstream(): Promise<MockUpstream> {
     const url = new URL(req.url || '/', 'http://x');
     received.push({ path: url.pathname + url.search, headers: req.headers, body });
 
+    // Account balance endpoints (OpenRouter, DeepSeek).
+    if (req.method === 'GET' && url.pathname.endsWith('/credits')) {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ data: { total_credits: 10, total_usage: 2.5 } }));
+      return;
+    }
+    if (req.method === 'GET' && /\/(auth\/)?key$/.test(url.pathname)) {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ data: { label: 'mock', limit: null, usage: 2.5, is_free_tier: false } }));
+      return;
+    }
+    if (req.method === 'GET' && url.pathname.endsWith('/user/balance')) {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ is_available: true, balance_infos: [{ currency: 'USD', total_balance: '7.25', granted_balance: '0', topped_up_balance: '7.25' }] }));
+      return;
+    }
     if (req.method === 'GET' && url.pathname.endsWith('/models')) {
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(JSON.stringify({ object: 'list', data: [{ id: 'mock-text' }, { id: 'mock-tool' }, { id: 'text-embedding-3-small' }] }));
@@ -193,6 +210,60 @@ export async function startMockUpstream(): Promise<MockUpstream> {
       return;
     }
 
+    // ---- autocomplete endpoints
+    const sseOut = (chunks: any[]) => {
+      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      for (const c of chunks) res.write(`data: ${JSON.stringify(c)}\n\n`);
+      res.end('data: [DONE]\n\n');
+    };
+    if (url.pathname.endsWith('/fim/completions')) {
+      return sseOut([
+        { id: 'fim', object: 'chat.completion.chunk', model, choices: [{ index: 0, delta: { role: 'assistant', content: '' }, finish_reason: null }] },
+        { id: 'fim', object: 'chat.completion.chunk', model, choices: [{ index: 0, delta: { content: 'return a + b' }, finish_reason: null }] },
+        { id: 'fim', object: 'chat.completion.chunk', model, choices: [{ index: 0, delta: {}, finish_reason: 'stop' }], usage: { prompt_tokens: 20, completion_tokens: 5 } },
+      ]);
+    }
+    if (/\/(beta\/)?completions$/.test(url.pathname) && !url.pathname.endsWith('/chat/completions')) {
+      if (model.includes('nofim')) {
+        res.writeHead(404, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ error: { message: '404 page not found' } }));
+        return;
+      }
+      return sseOut([
+        { id: 'cmpl', object: 'text_completion', model, choices: [{ index: 0, text: 'return a', finish_reason: null }] },
+        { id: 'cmpl', object: 'text_completion', model, choices: [{ index: 0, text: ' + b', finish_reason: 'stop' }] },
+        { id: 'cmpl', object: 'text_completion', model, choices: [], usage: { prompt_tokens: 20, completion_tokens: 5 } },
+      ]);
+    }
+    if (url.pathname.endsWith('/infill')) {
+      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      res.write(`data: ${JSON.stringify({ content: 'return a + b', stop: false })}\n\n`);
+      res.end(`data: ${JSON.stringify({ content: '', stop: true, tokens_predicted: 5, tokens_evaluated: 20 })}\n\n`);
+      return;
+    }
+    // ---- other OpenAI endpoints (generic proxy)
+    if (url.pathname.endsWith('/images/generations')) {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ created: 1, data: [{ url: `https://img.example/${model}.png` }] }));
+      return;
+    }
+    if (url.pathname.endsWith('/audio/speech')) {
+      res.writeHead(200, { 'content-type': 'audio/mpeg' });
+      res.end(Buffer.from([0x49, 0x44, 0x33, 0x04, 0x00, 0xff]));
+      return;
+    }
+    if (url.pathname.endsWith('/audio/transcriptions')) {
+      const got = /name="model"\r\n\r\n([^\r]*)/.exec(raw)?.[1];
+      const hasFile = raw.includes('filename="clip.wav"');
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ text: `transcribed by ${got} file=${hasFile}` }));
+      return;
+    }
+    if (url.pathname.endsWith('/rerank')) {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ model, results: [{ index: 1, relevance_score: 0.9 }, { index: 0, relevance_score: 0.1 }] }));
+      return;
+    }
     if (url.pathname.endsWith('/embeddings')) {
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(JSON.stringify({ object: 'list', data: [{ object: 'embedding', index: 0, embedding: [0.1, 0.2] }], model }));
@@ -208,7 +279,23 @@ export async function startMockUpstream(): Promise<MockUpstream> {
       if (model.includes('maxtok') && maxTok > 1000) return fail(400, { error: { message: `max_tokens is too large: ${maxTok}. This model supports at most 1000 completion tokens, whereas you provided ${maxTok}.` } });
       if (model.includes('nosystem') && (body.messages || []).some((m: any) => m.role === 'system')) return fail(400, { error: { message: 'System role not supported' } });
       if (model.includes('strict') && 'temperature' in body) return fail(422, { detail: [{ type: 'extra_forbidden', loc: ['body', 'temperature'], msg: 'Extra inputs are not permitted', input: body.temperature }] });
+      if (model.includes('ctx4k')) {
+        // vLLM-style context overflow for prompts over ~4k tokens.
+        const chars = JSON.stringify(body.messages || []).length + JSON.stringify(body.tools || []).length;
+        if (chars > 16000) {
+          const n = Math.ceil(chars / 4);
+          return fail(400, { error: { message: `This model's maximum context length is 4096 tokens. However, you requested ${n + 1000} tokens (${n} in the messages, 1000 in the completion). Please reduce the length of the messages or completion.`, type: 'BadRequestError', code: 400 } });
+        }
+      }
       if (model.includes('slow')) await new Promise((r) => setTimeout(r, 600));
+      if (model.includes('ratelimited')) {
+        // Keys containing "exhaust" report no requests left for 45 s.
+        const exhausted = String(req.headers.authorization || '').includes('exhaust');
+        res.setHeader('x-ratelimit-limit-requests', '100');
+        res.setHeader('x-ratelimit-remaining-requests', exhausted ? '0' : '57');
+        res.setHeader('x-ratelimit-reset-requests', exhausted ? '45s' : '6m0s');
+        res.setHeader('x-ratelimit-remaining-tokens', '9000');
+      }
       return openai(res, model, body);
     }
     if (url.pathname.endsWith('/v1/messages')) return anthropic(res, model, body);

@@ -8,6 +8,7 @@ import { logger } from './logger';
 import type { AuthStyle, ProviderFlags, ProviderFormat, ToolMode } from '../providers/catalog';
 import { getTemplate, fillVars } from '../providers/catalog';
 import type { CompatFix } from '../router/compat';
+import type { LimitRule } from '../router/quota';
 import { modelDb } from './modeldb';
 
 export interface ProviderKey {
@@ -83,7 +84,44 @@ export interface Settings {
   cacheTtlSeconds: number;
   /** Refresh the model capability database weekly. */
   modelDbAutoUpdate: boolean;
+  /** Shrink prompts before they are sent (see router/tokensaver.ts). */
+  tokenSaver: TokenSaverSettings;
+  /** The dashboard's "Get started" guide was completed or dismissed. */
+  onboarded: boolean;
 }
+
+export type TokenSaverMode = 'off' | 'safe' | 'balanced' | 'aggressive' | 'custom';
+
+export interface TokenSaverSettings {
+  mode: TokenSaverMode;
+  /** Old tool results above this size (tokens) keep only their head and tail. 0 = off. */
+  toolResultMaxTokens: number;
+  /** The last N conversation turns are never modified. */
+  keepRecentTurns: number;
+  /** Replace repeated identical tool results with a short reference. */
+  dedupeToolResults: boolean;
+  /** Trailing spaces, runs of blank lines, CRLF. */
+  compactWhitespace: boolean;
+  /** Minify JSON found in old tool results. */
+  minifyJson: boolean;
+  /** Keep images only in the most recent turns. */
+  dropOldImages: boolean;
+  /** Drop reasoning blocks from earlier turns (providers ignore most of them anyway). */
+  dropOldThinking: boolean;
+  /** Compact the conversation when it exceeds this fraction of the model's context window (0 = off). */
+  compactAt: number;
+  /** Aim for this fraction of the context window after compaction. */
+  compactTarget: number;
+  /** Model used to summarise compacted turns ("" = fast built-in compaction only). */
+  summarizer: string;
+}
+
+export const TOKEN_SAVER_PRESETS: Record<Exclude<TokenSaverMode, 'custom'>, TokenSaverSettings> = {
+  off: { mode: 'off', toolResultMaxTokens: 0, keepRecentTurns: 4, dedupeToolResults: false, compactWhitespace: false, minifyJson: false, dropOldImages: false, dropOldThinking: false, compactAt: 0, compactTarget: 0.6, summarizer: '' },
+  safe: { mode: 'safe', toolResultMaxTokens: 12000, keepRecentTurns: 6, dedupeToolResults: true, compactWhitespace: true, minifyJson: false, dropOldImages: false, dropOldThinking: false, compactAt: 0.92, compactTarget: 0.7, summarizer: '' },
+  balanced: { mode: 'balanced', toolResultMaxTokens: 4000, keepRecentTurns: 4, dedupeToolResults: true, compactWhitespace: true, minifyJson: true, dropOldImages: true, dropOldThinking: true, compactAt: 0.85, compactTarget: 0.6, summarizer: '' },
+  aggressive: { mode: 'aggressive', toolResultMaxTokens: 1500, keepRecentTurns: 2, dedupeToolResults: true, compactWhitespace: true, minifyJson: true, dropOldImages: true, dropOldThinking: true, compactAt: 0.7, compactTarget: 0.45, summarizer: '' },
+};
 
 export interface AppConfig {
   version: number;
@@ -94,6 +132,8 @@ export interface AppConfig {
   apiKeys: RouterKey[];
   /** Compatibility fixes learned per "provider::model". */
   compat: Record<string, CompatFix>;
+  /** Budgets and request/token limits (see router/quota.ts). */
+  limits: LimitRule[];
 }
 
 export const DEFAULT_PORT = 18080;
@@ -121,12 +161,15 @@ export function defaultConfig(): AppConfig {
       adaptiveCompat: true,
       cacheTtlSeconds: 0,
       modelDbAutoUpdate: true,
+      tokenSaver: { ...TOKEN_SAVER_PRESETS.safe },
+      onboarded: false,
     },
     providers: [],
     combos: [],
     aliases: {},
     apiKeys: [],
     compat: {},
+    limits: [],
   };
 }
 
@@ -239,8 +282,13 @@ export function normalize(raw: any): AppConfig {
     aliases: raw?.aliases && typeof raw.aliases === 'object' ? raw.aliases : {},
     apiKeys: Array.isArray(raw?.apiKeys) ? raw.apiKeys : [],
     compat: raw?.compat && typeof raw.compat === 'object' ? raw.compat : {},
+    limits: Array.isArray(raw?.limits) ? raw.limits : [],
   };
   if (!cfg.settings.sessionSecret) cfg.settings.sessionSecret = randomKey('');
+  cfg.settings.tokenSaver = normalizeTokenSaver(raw?.settings?.tokenSaver);
+  // Existing installs that already have providers don't need the welcome guide.
+  if (raw?.settings?.onboarded === undefined) cfg.settings.onboarded = cfg.providers.length > 0;
+  cfg.limits = cfg.limits.map(normalizeLimit).filter((l): l is LimitRule => !!l);
   cfg.providers = cfg.providers.map((p: any) => {
     const tpl = getTemplate(p.type);
     return {
@@ -332,4 +380,48 @@ export function newProviderFromTemplate(
     authPrefix: tpl.authPrefix,
     createdAt: Date.now(),
   };
+}
+
+export function normalizeTokenSaver(raw: any): TokenSaverSettings {
+  const mode: TokenSaverMode = ['off', 'safe', 'balanced', 'aggressive', 'custom'].includes(raw?.mode) ? raw.mode : 'safe';
+  if (mode !== 'custom') return { ...TOKEN_SAVER_PRESETS[mode] };
+  const base = TOKEN_SAVER_PRESETS.balanced;
+  const num = (v: any, d: number, min: number, max: number) => (Number.isFinite(Number(v)) ? Math.min(max, Math.max(min, Number(v))) : d);
+  const bool = (v: any, d: boolean) => (typeof v === 'boolean' ? v : d);
+  return {
+    mode,
+    toolResultMaxTokens: num(raw.toolResultMaxTokens, base.toolResultMaxTokens, 0, 1_000_000),
+    keepRecentTurns: num(raw.keepRecentTurns, base.keepRecentTurns, 0, 100),
+    dedupeToolResults: bool(raw.dedupeToolResults, base.dedupeToolResults),
+    compactWhitespace: bool(raw.compactWhitespace, base.compactWhitespace),
+    minifyJson: bool(raw.minifyJson, base.minifyJson),
+    dropOldImages: bool(raw.dropOldImages, base.dropOldImages),
+    dropOldThinking: bool(raw.dropOldThinking, base.dropOldThinking),
+    compactAt: num(raw.compactAt, base.compactAt, 0, 1),
+    compactTarget: num(raw.compactTarget, base.compactTarget, 0.1, 0.95),
+    summarizer: typeof raw.summarizer === 'string' ? raw.summarizer.trim() : '',
+  };
+}
+
+export function normalizeLimit(l: any): LimitRule | undefined {
+  if (!l || typeof l !== 'object') return undefined;
+  const scope = ['global', 'provider', 'key', 'model', 'apikey', 'client'].includes(l.scope) ? l.scope : undefined;
+  const period = ['minute', 'hour', 'day', 'week', 'month'].includes(l.period) ? l.period : undefined;
+  if (!scope || !period) return undefined;
+  const pos = (v: any) => (Number(v) > 0 ? Number(v) : undefined);
+  const rule: LimitRule = {
+    id: String(l.id || randomId(8)),
+    name: typeof l.name === 'string' && l.name.trim() ? l.name.trim().slice(0, 80) : undefined,
+    scope,
+    target: scope === 'global' ? '' : String(l.target || '').trim(),
+    period,
+    maxRequests: pos(l.maxRequests),
+    maxTokens: pos(l.maxTokens),
+    maxCost: pos(l.maxCost),
+    action: l.action === 'warn' ? 'warn' : 'block',
+    enabled: l.enabled !== false,
+  };
+  if (!rule.maxRequests && !rule.maxTokens && !rule.maxCost) return undefined;
+  if (scope !== 'global' && !rule.target) return undefined;
+  return rule;
 }

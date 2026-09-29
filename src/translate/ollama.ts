@@ -3,6 +3,7 @@
 // use any model behind the router. Streams are NDJSON, not SSE.
 import type { IRRequest, IRMessage, IRPart, IREvent, IRResponse, IRStop, IRUsage, StreamEncoder, IRTool, IREffort } from './ir';
 import { genId, safeJsonParse } from './ir';
+import { fimRequest } from './fim';
 
 function imagesToParts(images: any): IRPart[] {
   return Array.isArray(images) ? images.filter((b) => typeof b === 'string').map((data) => ({ type: 'image' as const, mediaType: 'image/png', data })) : [];
@@ -80,8 +81,11 @@ export function parseOllamaChat(body: any, stream: boolean): IRRequest {
 }
 
 export function parseOllamaGenerate(body: any, stream: boolean): IRRequest {
-  let text = String(body.prompt || '');
-  if (body.suffix) text = `Fill in the missing text between PREFIX and SUFFIX. Reply with the missing text only.\n\nPREFIX:\n${text}\n\nSUFFIX:\n${body.suffix}`;
+  const text = String(body.prompt || '');
+  // Autocomplete: suffix (fill-in-the-middle) or raw mode (no chat template).
+  if (body.suffix || body.raw === true) {
+    return { ...fimRequest({ ...body, stream }, text, String(body.suffix || ''), body.suffix ? 'infill' : 'complete'), stream };
+  }
   return {
     model: body.model || '',
     system: body.system || undefined,

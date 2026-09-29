@@ -8,6 +8,7 @@ import type { IncomingMessage } from 'http';
 import type { AppConfig, RouterKey } from '../core/config';
 import { isLoopback, safeEqual } from '../core/util';
 import { clientIp, parseCookies } from './http';
+import { isInternal } from '../router/internal';
 
 const LOCAL_HOSTNAMES = new Set(['localhost', '127.0.0.1', '[::1]', '::1']);
 
@@ -61,6 +62,7 @@ export function authorizeApi(req: IncomingMessage, url: URL, cfg: AppConfig, has
   const match = findRouterKey(cfg, key);
   if (match) return { ok: true, keyId: match.id };
   const remote = !isLoopback(clientIp(req));
+  if (!remote && isInternal(req.headers)) return { ok: true, keyId: 'internal' };
   const crossOrigin = !isSameOrigin(req);
   if (!cfg.settings.requireApiKey && !remote && !crossOrigin) return { ok: true };
   if (hasDashboardSession && !crossOrigin) return { ok: true, keyId: 'dashboard' };

@@ -49,7 +49,8 @@ export function createRouterServer(deps: { config: ConfigStore; usage: UsageStor
         return text(res, 403, 'Forbidden host');
       }
 
-      const api = isApiPath(path);
+      // POST / is an API call (protocol auto-detection); GET / is the dashboard.
+      const api = isApiPath(path) || (req.method === 'POST' && path === '/');
       if (api) {
         // CORS for browser-based clients; authorization still applies.
         res.setHeader('access-control-allow-origin', req.headers.origin || '*');

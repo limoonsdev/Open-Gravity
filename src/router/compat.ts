@@ -13,6 +13,10 @@ export interface CompatFix {
   noStreamOptions?: boolean;
   maxTokensField?: 'max_tokens' | 'max_completion_tokens';
   maxTokensCap?: number;
+  /** Real context window reported by the provider (drives token-saver compaction). */
+  contextWindow?: number;
+  /** The provider's native completion endpoint failed: serve autocomplete through chat. */
+  noNativeFim?: boolean;
   dropParams?: string[];
   /** Human-readable reasons, newest last. */
   reasons?: string[];
@@ -23,7 +27,7 @@ export const compatKey = (providerId: string, model: string) => `${providerId}::
 
 /** Fixes that need the request rebuilt from the IR (no raw passthrough). */
 export function needsTranslation(fix: CompatFix): boolean {
-  return !!(fix.emulateTools || fix.mergeSystem || fix.stripImages || fix.noReasoning || fix.noResponseFormat);
+  return !!(fix.emulateTools || fix.mergeSystem || fix.stripImages || fix.noReasoning || fix.noResponseFormat || fix.contextWindow);
 }
 
 const PROTECTED = new Set(['model', 'messages', 'contents', 'input', 'prompt', 'stream', 'tools', 'functions', 'system', 'instructions', 'max_tokens']);
@@ -44,6 +48,27 @@ export interface DetectContext {
   hasReasoning: boolean;
   hasResponseFormat: boolean;
   requestedMaxTokens?: number;
+  /** The token saver can compact the conversation (learn the context window). */
+  canCompact?: boolean;
+}
+
+/** Context window size mentioned in a "prompt too long" error. */
+export function contextWindowFrom(t: string): number | undefined {
+  const pats = [
+    /maximum context length is (\d{3,8})/,
+    /(\d{3,8}) tokens? > (\d{3,8}) maximum/,
+    /(?:available )?context (?:size|window|length)[^\d]{0,24}\(?(\d{3,8})\s*tokens?/,
+    /maximum number of tokens allowed \((\d{3,8})\)/,
+    /exceeds? (?:the )?(?:model'?s? )?(?:maximum )?(?:context|token) (?:length|limit|window)[^\d]{0,20}(?:of )?(\d{3,8})/,
+  ];
+  for (const re of pats) {
+    const m = re.exec(t);
+    if (m) {
+      const n = Number(m[m.length - 1]);
+      if (n >= 512) return n;
+    }
+  }
+  return undefined;
 }
 
 export interface DetectedFix {
@@ -113,6 +138,12 @@ export function detectCompatFix(c: DetectContext): DetectedFix | null {
     const below = numbersIn(t).filter((n) => n >= 256 && n < req);
     const cap = below.length ? Math.max(...below) : Math.max(1024, Math.floor(req / 2));
     if (!cur.maxTokensCap || cap < cur.maxTokensCap) return { fix: { maxTokensCap: cap }, reason: `max output tokens capped at ${cap}` };
+  }
+
+  // --- the prompt itself is larger than the context window: learn it, the token saver compacts
+  if (c.canCompact && contextOverflow || (c.canCompact && /context_length_exceeded|context length|context window|too many tokens|prompt is too long/.test(t))) {
+    const win = contextWindowFrom(t);
+    if (win && (!cur.contextWindow || win < cur.contextWindow)) return { fix: { contextWindow: win }, reason: `context window is ${win} tokens: compacting the conversation` };
   }
 
   // --- sampling parameters
