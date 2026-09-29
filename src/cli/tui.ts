@@ -1,253 +1,117 @@
+// Console UI shown while the router runs: banner + live log + a few commands.
 import readline from 'readline';
-import chalk from 'chalk';
-import { AntigravityDiscovery } from '../engines/discovery';
-import { antigravityCore, UserAccountDetails } from '../engines/antigravity-core';
-import { requestRouter } from '../engines/router';
-import { IdeConfigurator } from '../engines/ide-config';
-import { ClaudeLauncher } from '../engines/claude-launcher';
-import { ClaudeGuide } from '../engines/claude-guide';
-import { ModelSelector } from './model-selector';
-import { logger, LogEntry } from '../utils/logger';
-import { configManager } from '../utils/config';
+import { c, logger } from '../core/logger';
+import { VERSION } from '../core/util';
+import type { RunningApp } from '../app';
+import { openBrowser } from '../app';
+import { effectiveDefault, listRoutableModels } from '../router/resolve';
+import { launchClaude, launchCodex } from '../integrations/launcher';
 
-export class InteractiveTui {
-  private rl: readline.Interface | null = null;
-  private port: number;
-  private host: string;
-  private defaultModel: string;
-  private isRunning: boolean = false;
-  private isSelectingModel: boolean = false;
-
-  constructor(options: { port: number; host: string; defaultModel: string }) {
-    this.port = options.port;
-    this.host = options.host;
-    this.defaultModel = options.defaultModel;
+export function banner(app: RunningApp) {
+  const cfg = app.config.get();
+  const url = app.baseUrl;
+  const active = cfg.providers.filter((p) => p.enabled).length;
+  const line = c.gray('─'.repeat(58));
+  const def = effectiveDefault(cfg) || c.yellow('none yet');
+  console.log('');
+  console.log(`  ${c.magenta('◉')} ${c.bold('Open Gravity')} ${c.gray(`v${VERSION}`)}  ${c.gray('· universal AI router')}`);
+  console.log(`  ${line}`);
+  console.log(`  ${c.bold('Dashboard')}   ${c.cyan(url)}`);
+  console.log(`  ${c.bold('OpenAI')}      ${url}/v1           ${c.gray('(chat, responses)')}`);
+  console.log(`  ${c.bold('Anthropic')}   ${url}              ${c.gray('(Claude Code)')}`);
+  console.log(`  ${c.bold('Gemini')}      ${url}              ${c.gray('(Gemini CLI)')}`);
+  console.log(`  ${line}`);
+  console.log(`  Providers ${c.bold(String(active))}  ·  Combos ${c.bold(String(cfg.combos.filter((x) => x.enabled).length))}  ·  Default ${c.bold(def)}`);
+  if (!active) console.log(`  ${c.yellow('→ Open the dashboard to add your first provider.')}`);
+  if (app.info.host !== '127.0.0.1' && app.info.host !== 'localhost') {
+    console.log(`  ${c.yellow(`Listening on ${app.info.host}: remote clients need an API key.`)}`);
   }
+  console.log(`  ${c.gray('Commands: open · claude · codex · models · status · help · quit')}`);
+  console.log('');
+}
 
-  public async start(account: UserAccountDetails | null, pid?: number, activePort?: number) {
-    this.isRunning = true;
-    this.drawHeader(account, pid, activePort);
+const HELP = `
+  open            open the dashboard in your browser
+  claude [args]   launch Claude Code through the router
+  codex [args]    launch Codex CLI through the router
+  models          list routable models (combos, provider/model)
+  status          request stats for the last 24h
+  clear           clear the screen
+  quit            stop the router
+`;
 
-    this.createReadline();
+export function startTui(app: RunningApp, onQuit: () => void) {
+  if (!process.stdin.isTTY) return;
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout, prompt: c.magenta('og › ') });
+  let busy = false;
 
-    // Intercept logs so they don't break current user input line
-    logger.on('log', (entry: LogEntry) => {
-      if (!this.isRunning || !this.rl || this.isSelectingModel) return;
-
-      const isPolling = entry.message.includes('/status') || entry.message.includes('/health');
-      if (isPolling) return;
-
-      readline.clearLine(process.stdout, 0);
-      readline.cursorTo(process.stdout, 0);
-
-      let tag = '';
-      if (entry.level === 'request') tag = chalk.magenta('REQ');
-      else if (entry.level === 'success') tag = chalk.green('OK ');
-      else if (entry.level === 'error') tag = chalk.red('ERR');
-      else if (entry.level === 'warn') tag = chalk.yellow('WRN');
-      else tag = chalk.blue('INF');
-
-      console.log(`${chalk.gray(`[${entry.timestamp}]`)} ${tag} ${entry.message}`);
-      this.rl.prompt(true);
-    });
-  }
-
-  private createReadline() {
-    this.rl = readline.createInterface({
-      input: process.stdin,
-      output: process.stdout,
-      prompt: chalk.cyan('og > '),
-    });
-
-    this.rl.prompt();
-
-    this.rl.on('line', async (line) => {
-      if (this.isSelectingModel) return;
-
-      const input = line.trim();
-      if (!input) {
-        this.rl?.prompt();
-        return;
-      }
-
-      await this.handleCommand(input);
-      if (this.isRunning && !this.isSelectingModel) {
-        this.rl?.prompt();
-      }
-    });
-
-    this.rl.on('close', () => {
-      if (!this.isSelectingModel) {
-        this.shutdown();
-      }
-    });
-  }
-
-  public drawHeader(account: UserAccountDetails | null, pid?: number, activePort?: number) {
-    const currentDef = configManager.get().defaultModel;
-    console.log('');
-    console.log(`  ${chalk.bold.cyan('Open Gravity')} ${chalk.gray('v1.0.0')} — ${chalk.white('Universal Antigravity AI Bridge')}`);
-    console.log('');
-    console.log(`  ${chalk.bold('➜ Endpoints:')}`);
-    console.log(`    • Claude Code / Anthropic : ${chalk.magenta.bold(`http://${this.host}:${this.port}`)}`);
-    console.log(`    • OpenAI / Codex / Cursor : ${chalk.yellow.bold(`http://${this.host}:${this.port}/v1`)}`);
-    console.log('');
-    console.log(`  ${chalk.bold('➜ Session:')}`);
-
-    if (account) {
-      const quotaPct = account.quotaRemainingPercent;
-      let resetStr = '';
-      if (account.quotaResetTime) {
-        try {
-          const d = new Date(account.quotaResetTime);
-          resetStr = ` (Resets at ${d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })})`;
-        } catch {}
-      }
-      const quotaColor = quotaPct > 50 ? chalk.green : (quotaPct > 10 ? chalk.yellow : chalk.red);
-
-      console.log(`    • Account:      ${chalk.white.bold(account.name)} ${chalk.gray(`(${account.email})`)}`);
-      console.log(`    • Plan:         ${chalk.hex('#a855f7')(account.planName)} ${chalk.green('✔')}`);
-      console.log(`    • Model Quota:  ${quotaColor(`${quotaPct}% remaining`)}${chalk.gray(resetStr)}`);
-    } else {
-      console.log(`    • Account:      ${chalk.gray('Detecting Antigravity session...')}`);
+  const runChild = async (fn: () => Promise<number>) => {
+    busy = true;
+    rl.pause();
+    logger.quiet = true;
+    try {
+      await fn();
+    } catch (e: any) {
+      console.log(c.red(`  ${e.message}`));
+    } finally {
+      logger.quiet = false;
+      busy = false;
+      rl.resume();
+      rl.prompt();
     }
+  };
 
-    const conn = pid ? chalk.green(`Connected (PID ${pid}, Port ${activePort})`) : chalk.yellow('Offline');
-    console.log(`    • Antigravity:  ${conn}`);
-    console.log(`    • Default:      ${chalk.cyan(currentDef)}`);
-    console.log('');
-    console.log(`  ${chalk.gray('Hotkeys/Commands:')} ${chalk.bold.magenta('claude')} (${chalk.bold('cl')})  ${chalk.cyan('models')} (${chalk.bold('m')})  ${chalk.cyan('guide')} (${chalk.bold('g')})  ${chalk.cyan('configure')} (${chalk.bold('c')})  ${chalk.cyan('status')} (${chalk.bold('s')})  ${chalk.cyan('doctor')} (${chalk.bold('d')})  ${chalk.cyan('clear')} (${chalk.bold('cls')})  ${chalk.cyan('quit')} (${chalk.bold('q')})`);
-    console.log(chalk.gray('  --------------------------------------------------------------------------------'));
-    console.log('');
-  }
-
-  private async handleCommand(cmd: string) {
-    const parts = cmd.split(' ');
-    const main = parts[0].toLowerCase();
-    const args = parts.slice(1);
-
-    switch (main) {
-      case 'cl':
+  rl.on('line', async (line) => {
+    if (busy) return;
+    const [cmd, ...args] = line.trim().split(/\s+/);
+    const cfg = app.config.get();
+    const key = cfg.apiKeys.find((k) => k.enabled)?.key || '';
+    switch ((cmd || '').toLowerCase()) {
+      case '':
+        break;
+      case 'open':
+      case 'o':
+        openBrowser(app.baseUrl);
+        break;
       case 'claude':
-      case 'run-claude':
-        this.isSelectingModel = true;
-        if (this.rl) {
-          this.rl.close();
-          this.rl = null;
-        }
-
-        await ClaudeLauncher.launchClaude(args);
-        this.isSelectingModel = false;
-        this.createReadline();
-        break;
-
-      case 'g':
-      case 'guide':
-        ClaudeGuide.printGuide();
-        break;
-
-      case 'm':
-      case 'model':
+      case 'cl':
+        await runChild(() => launchClaude(app.baseUrl, key, args));
+        return;
+      case 'codex':
+      case 'cx':
+        await runChild(() => launchCodex(app.baseUrl, key, args, effectiveDefault(cfg) || undefined));
+        return;
       case 'models':
-      case 'use':
-        this.isSelectingModel = true;
-        if (this.rl) {
-          this.rl.close();
-          this.rl = null;
-        }
-
-        const selector = new ModelSelector(() => {
-          this.isSelectingModel = false;
-          this.createReadline();
-        });
-        await selector.start();
+      case 'm':
+        for (const m of listRoutableModels(cfg)) console.log(`  ${m.kind === 'combo' ? c.magenta('combo') : m.kind === 'alias' ? c.yellow('alias') : c.gray('model')}  ${m.id}`);
         break;
-
-      case 'c':
-      case 'config':
-      case 'configure':
-        console.log(chalk.cyan('\n[TUI] Running automatic IDE configurator & Claude bypass...'));
-        const results = IdeConfigurator.configureAll(process.cwd());
-        for (const r of results) {
-          console.log(`  ${r.success ? chalk.green('✔') : chalk.red('✖')} ${chalk.bold(r.ide.padEnd(12))} ${r.message}`);
-        }
-        ClaudeGuide.generateClaudeMd();
-        console.log(chalk.green('✔ Configuration updated on disk.\n'));
-        break;
-
-      case 's':
       case 'status':
-        console.log(chalk.cyan('\n[TUI] Live Status & Quota Refresh:'));
-        const instance = await AntigravityDiscovery.discover(true);
-        const account = await antigravityCore.getUserAccountDetails();
-        const stats = requestRouter.getStats();
-
-        if (account) {
-          console.log(`  • User:     ${account.name} (${account.email})`);
-          console.log(`  • Plan:     ${account.planName}`);
-          console.log(`  • Quota:    ${account.quotaRemainingPercent}% remaining`);
-        }
-        console.log(`  • Core:     ${instance ? chalk.green(`Online (PID ${instance.pid}, Port ${instance.port})`) : chalk.yellow('Offline')}`);
-        console.log(`  • Traffic:  ${stats.totalRequests} total requests (${stats.activeRequests} active), last latency: ${stats.lastLatencyMs}ms\n`);
+      case 's': {
+        const s = app.usage.summary('24h').totals;
+        console.log(`  24h: ${s.requests} requests · ${(s.successRate * 100).toFixed(1)}% ok · ${s.input + s.output} tokens · ~$${s.cost.toFixed(4)} · avg ${s.avgLatencyMs}ms`);
         break;
-
-      case 'd':
-      case 'doc':
-      case 'doctor':
-        console.log(chalk.cyan('\n[TUI] Quick Diagnostic:'));
-        const inst = await AntigravityDiscovery.discover(true);
-        console.log(`  • Daemon: ${inst ? chalk.green('✔ Detected') : chalk.red('✖ Not running')}`);
-        if (inst) {
-          try {
-            await antigravityCore.rpcCall('GetCapabilities');
-            console.log(`  • RPC:    ${chalk.green('✔ Connected (CSRF validated)')}`);
-          } catch (e: any) {
-            console.log(`  • RPC:    ${chalk.red('✖ Error: ' + e.message)}`);
-          }
-        }
-        console.log('');
-        break;
-
-      case 'cls':
+      }
       case 'clear':
+      case 'cls':
         console.clear();
-        const instCurrent = await AntigravityDiscovery.discover();
-        const accCurrent = await antigravityCore.getUserAccountDetails();
-        this.drawHeader(accCurrent, instCurrent?.pid, instCurrent?.port);
+        banner(app);
         break;
-
       case 'help':
       case 'h':
       case '?':
-        console.log(chalk.cyan('\n[TUI] Available Commands:'));
-        console.log(`  • ${chalk.bold('claude')}    (${chalk.bold('cl')}): Launch Claude Code with automatic login bypass`);
-        console.log(`  • ${chalk.bold('models')}    (${chalk.bold('m')}): Interactive arrow-key model selector & 1-token health ping`);
-        console.log(`  • ${chalk.bold('guide')}     (${chalk.bold('g')}): Display integrated guide for Claude Code`);
-        console.log(`  • ${chalk.bold('configure')} (${chalk.bold('c')}): Auto-configure Cursor, Continue, Aider, Claude Code`);
-        console.log(`  • ${chalk.bold('status')}    (${chalk.bold('s')}): Refresh live Google account info & model quota`);
-        console.log(`  • ${chalk.bold('doctor')}    (${chalk.bold('d')}): Test Antigravity connection & RPC`);
-        console.log(`  • ${chalk.bold('clear')}     (${chalk.bold('cls')}): Clear screen and redraw banner`);
-        console.log(`  • ${chalk.bold('quit')}      (${chalk.bold('q')}): Stop server and exit\n`);
+        console.log(HELP);
         break;
-
-      case 'q':
       case 'quit':
       case 'exit':
-        this.shutdown();
-        break;
-
+      case 'q':
+        rl.close();
+        return;
       default:
-        console.log(chalk.yellow(`Unknown command: '${cmd}'. Type 'help' or 'h' for list of commands.`));
-        break;
+        console.log(c.gray(`  Unknown command "${cmd}". Type "help".`));
     }
-  }
-
-  private shutdown() {
-    this.isRunning = false;
-    console.log(chalk.gray('\nStopping Open Gravity server...'));
-    if (this.rl) {
-      this.rl.close();
-    }
-    process.exit(0);
-  }
+    rl.prompt();
+  });
+  rl.on('close', onQuit);
+  rl.on('SIGINT', onQuit);
+  rl.prompt();
 }
